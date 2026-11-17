@@ -3,6 +3,8 @@ name = "braintracker"
 version = "0.1.0"
 description = "A personal log of what you did and how you did it"
 edition = "2021"
+license = "MIT"
+repository = "https://github.com/ioannismil/braintracker"
 
 [lib]
 name = "braintracker_lib"
@@ -20,6 +22,8 @@ tauri-plugin-autostart = "2.7.0"
 tauri-plugin-single-instance = "2.5.5"
 tauri-plugin-global-shortcut = "2.4.1"
 tauri-plugin-opener = "2.7.3"
+tauri-plugin-dialog = "2.8.4"
+tauri-plugin-updater = "2.14.1"
 
 [profile.release]
 codegen-units = 1

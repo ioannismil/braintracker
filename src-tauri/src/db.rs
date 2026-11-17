@@ -287,6 +287,35 @@ pub fn all_for_export(conn: &Connection) -> rusqlite::Result<Vec<(Entry, String,
     rows.collect()
 }
 
+// ---------- backup helpers ----------
+
+/// Cheap "did anything change?" signature, so daily backups skip identical copies.
+pub fn fingerprint(conn: &Connection) -> rusqlite::Result<String> {
+    conn.query_row(
+        "SELECT count(*) || ':' || coalesce(max(updated_at), 0) || ':' || coalesce(sum(pinned), 0) || ':' || coalesce(sum(id), 0)
+         FROM entries",
+        [],
+        |r| r.get(0),
+    )
+}
+
+/// Writes a consistent, compacted copy of the live database to `dest` (must not exist).
+pub fn vacuum_into(conn: &Connection, dest: &Path) -> rusqlite::Result<()> {
+    conn.execute("VACUUM INTO ?1", params![dest.to_string_lossy()])?;
+    Ok(())
+}
+
+/// Local time as "2026-11-18_143005", for backup folder names.
+pub fn local_stamp(conn: &Connection) -> rusqlite::Result<String> {
+    conn.query_row("SELECT strftime('%Y-%m-%d_%H%M%S', 'now', 'localtime')", [], |r| r.get(0))
+}
+
+pub fn all_settings(conn: &Connection) -> rusqlite::Result<Vec<(String, String)>> {
+    let mut stmt = conn.prepare("SELECT key, value FROM settings")?;
+    let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    rows.collect()
+}
+
 pub fn get_setting(conn: &Connection, key: &str) -> rusqlite::Result<Option<String>> {
     conn.query_row("SELECT value FROM settings WHERE key = ?1", params![key], |r| r.get(0))
         .optional()
@@ -327,7 +356,24 @@ mod tests {
         assert_eq!(list_entries(&c, Some("\"weird ( query"), None).unwrap().len(), 0);
 
         assert_eq!(list_tags(&c).unwrap().len(), 2);
+        let before = fingerprint(&c).unwrap();
         delete_entry(&c, e.id).unwrap();
         assert!(list_entries(&c, Some("resolv"), None).unwrap().is_empty());
+        assert_ne!(before, fingerprint(&c).unwrap());
+    }
+
+    #[test]
+    fn vacuum_into_makes_a_readable_copy() {
+        let dir = std::env::temp_dir().join(format!("bt-test-{}", now_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let live = open(&dir.join("live.db")).unwrap();
+        create_entry(&live, "Backed up", "body text", &[]).unwrap();
+        let copy_path = dir.join("copy.db");
+        vacuum_into(&live, &copy_path).unwrap();
+        let copy = open(&copy_path).unwrap();
+        assert_eq!(list_entries(&copy, Some("body"), None).unwrap().len(), 1);
+        assert_eq!(fingerprint(&live).unwrap(), fingerprint(&copy).unwrap());
+        drop((live, copy));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

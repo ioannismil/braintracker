@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { api, type AppInfo } from "./api";
+import { api, updateApi, type AppInfo, type UpdateInfo } from "./api";
+import Backups from "./Backups";
+import UpdateBanner from "./UpdateBanner";
 import {
   ACTIONS,
   comboFromEvent,
@@ -17,9 +19,29 @@ interface Props {
   info: ShortcutsInfo;
   onChange: (info: ShortcutsInfo) => void;
   onClose: () => void;
+  onUpdateFound: (u: UpdateInfo) => void;
+  beforeInstall: () => Promise<void>;
 }
 
-export default function Settings({ info, onChange, onClose }: Props) {
+export default function Settings({ info, onChange, onClose, onUpdateFound, beforeInstall }: Props) {
+  const [checking, setChecking] = useState(false);
+  const [found, setFound] = useState<UpdateInfo | null>(null);
+  const [updateMsg, setUpdateMsg] = useState("");
+
+  const checkUpdates = async () => {
+    setChecking(true);
+    setUpdateMsg("");
+    try {
+      const u = await updateApi.check();
+      setFound(u);
+      if (u) onUpdateFound(u);
+      else setUpdateMsg("You’re on the latest version.");
+    } catch (e) {
+      setUpdateMsg(`Couldn’t check for updates: ${e}`);
+    } finally {
+      setChecking(false);
+    }
+  };
   const [autostart, setAutostart] = useState<boolean | null>(null);
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [msg, setMsg] = useState("");
@@ -174,11 +196,34 @@ export default function Settings({ info, onChange, onClose }: Props) {
           </p>
         </div>
 
+        <div className="setting block">
+          <div className="setting-head">
+            <div>
+              <strong>Updates</strong>
+              <p>
+                Version {appInfo?.version ?? "…"} · BrainTracker checks for new versions automatically and offers to
+                install them.
+              </p>
+            </div>
+            <button className="tool" onClick={checkUpdates} disabled={checking}>
+              {checking ? "Checking…" : "Check now"}
+            </button>
+          </div>
+          {found && (
+            <div style={{ marginTop: 10 }}>
+              <UpdateBanner info={found} beforeInstall={beforeInstall} />
+            </div>
+          )}
+          {updateMsg && <p className="msg">{updateMsg}</p>}
+        </div>
+
+        <Backups />
+
         <div className="setting">
           <div>
             <strong>Your data{appInfo?.portable && <span className="badge">portable mode</span>}</strong>
             <p className="path">{appInfo?.dataDir ?? "…"}</p>
-            <p>Entries live in braintracker.db, screenshots in the images folder. Copy both to back up.</p>
+            <p>Entries live in braintracker.db, screenshots in the images folder.</p>
           </div>
           <button className="tool" onClick={() => appInfo && revealItemInDir(appInfo.dataDir)}>
             Open folder
@@ -197,7 +242,6 @@ export default function Settings({ info, onChange, onClose }: Props) {
 
         <p className="hint">
           Closing the window keeps BrainTracker running in the tray. Use the tray icon → Quit to exit.
-          {appInfo && ` · Version ${appInfo.version}`}
         </p>
         {msg && <p className="msg">{msg}</p>}
       </div>

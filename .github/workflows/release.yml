@@ -60,7 +60,18 @@ jobs:
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
       - name: Build app & installer
-        run: npx tauri build
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            # Signed updater artifacts (.sig) so installed apps can auto-update
+            npx tauri build --config src-tauri/tauri.release.conf.json
+          else
+            echo "::warning::TAURI_SIGNING_PRIVATE_KEY secret is not set — building without auto-update files."
+            npx tauri build
+          fi
 
       - name: Package installer + portable zip
         shell: pwsh
@@ -84,6 +95,25 @@ jobs:
             "(%APPDATA%\com.braintracker.app) instead."
           ) | Set-Content -Encoding utf8 "$stage/portable.txt"
           Compress-Archive -Path $stage -DestinationPath "out/BrainTracker_${v}_x64_portable.zip"
+
+          # Auto-update manifest: installed apps read releases/latest/download/latest.json
+          $sig = "src-tauri/target/release/bundle/nsis/BrainTracker_${v}_x64-setup.exe.sig"
+          if (Test-Path $sig) {
+            $repo = "${{ github.repository }}"
+            $manifest = [ordered]@{
+              version   = $v
+              notes     = "https://github.com/$repo/releases/tag/v$v"
+              pub_date  = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+              platforms = [ordered]@{
+                "windows-x86_64" = [ordered]@{
+                  signature = (Get-Content -Raw $sig).Trim()
+                  url       = "https://github.com/$repo/releases/download/v$v/BrainTracker_${v}_x64-setup.exe"
+                }
+              }
+            }
+            $manifest | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8NoBOM "out/latest.json"
+            Copy-Item $sig "out/"
+          }
 
           Get-ChildItem out | Format-Table Name, Length
 
@@ -128,6 +158,9 @@ jobs:
           target_commitish: ${{ github.sha }}
           body_path: notes.md
           make_latest: true
+          fail_on_unmatched_files: false
           files: |
             out/*.exe
             out/*.zip
+            out/*.sig
+            out/latest.json

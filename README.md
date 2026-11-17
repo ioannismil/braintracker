@@ -14,6 +14,7 @@ the setting you changed, the screenshot that explains it. Find any of it again i
 [![Downloads](https://img.shields.io/github/downloads/ioannismil/braintracker/total?style=flat-square&color=f2a65a)](https://github.com/ioannismil/braintracker/releases)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-2b2420?style=flat-square)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-24c8db?style=flat-square&logo=tauri&logoColor=white)](https://tauri.app)
+[![License: MIT](https://img.shields.io/badge/license-MIT-6b5f56?style=flat-square)](LICENSE)
 
 [**Download**](#-download) · [Features](#-features) · [Shortcuts](#%EF%B8%8F-keyboard-shortcuts) · [Your data](#-your-data) · [Build from source](#%EF%B8%8F-build-from-source)
 
@@ -62,7 +63,21 @@ Starts with Windows and lives in the system tray. Summon the full window with <k
 <td valign="top">
 
 ### 🔒 Yours, and offline
-No account, no cloud, no telemetry. One local SQLite file you can back up or export to plain Markdown anytime. Every shortcut is configurable.
+No account, no cloud, no telemetry. One local SQLite file you can export to plain Markdown anytime. Every shortcut is configurable.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### 🛟 Automatic backups
+A daily snapshot whenever something changed — to `Documents`, OneDrive or any folder you pick. Keeps the newest 30; restore any of them in one click.
+
+</td>
+<td valign="top">
+
+### 🔄 Updates itself
+Checks GitHub for new releases and installs them with one click — your data and settings carry over. Portable copies get a download link instead.
 
 </td>
 </tr>
@@ -81,7 +96,7 @@ Grab the latest version from the **[Releases page](https://github.com/ioannismil
 > BrainTracker isn't code-signed yet, so Windows SmartScreen may say *"Windows protected your PC"*. Click **More info → Run anyway**.
 > It uses the Microsoft Edge WebView2 runtime, which is already installed on Windows 11 and up-to-date Windows 10.
 
-**Updating:** quit BrainTracker from the tray icon, then run the new installer. Your entries are kept.
+**Updating:** automatic — BrainTracker shows *"Update available"* in the sidebar; click **Install & restart**. (You can also check from **Settings → Updates**.) Portable users download the new zip and copy their `data` folder over.
 
 ## ⌨️ Keyboard shortcuts
 
@@ -116,7 +131,11 @@ Everything stays on your machine.
 | Installed | `%APPDATA%\com.braintracker.app\` |
 | Portable | `data\` next to `BrainTracker.exe` |
 
-Inside you'll find `braintracker.db` (all entries) and `images\` (pasted screenshots). Copy both to back up, or use **Settings → Export** to write every entry as a Markdown file — screenshots included — to `Documents\BrainTracker Export`.
+Inside you'll find `braintracker.db` (all entries) and `images\` (pasted screenshots).
+
+**Backups** run automatically once a day when something changed, into `Documents\BrainTracker Backups` (portable: `data\backups`). Change the folder, how many to keep, or restore one in **Settings → Automatic backups**. A restore always saves a *before-restore* snapshot of your current data first, and keeps your current settings.
+
+**Export:** **Settings → Export** writes every entry as a Markdown file — screenshots included — to `Documents\BrainTracker Export`.
 
 > [!TIP]
 > Any copy of `BrainTracker.exe` becomes portable when a file named `portable.txt` sits next to it.
@@ -165,11 +184,17 @@ Every push to `main` runs the [Release workflow](.github/workflows/release.yml),
 1. runs the test suite,
 2. builds the app and the NSIS installer,
 3. packages the portable zip,
-4. publishes a GitHub release tagged **`v<major>.<minor>.<build>`** with a changelog generated from the commits since the previous release.
+4. signs the installer and publishes `latest.json`, which installed copies use to update themselves,
+5. publishes a GitHub release tagged **`v<major>.<minor>.<build>`** with a changelog generated from the commits since the previous release.
 
 - To start a new version series, change `major.minor` in [`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json) (e.g. `0.2.0` → releases become `v0.2.N`).
 - Commits that only touch Markdown/docs don't trigger a release. Add `[skip ci]` to a commit message to skip one manually.
 - Pull requests are checked by the [CI workflow](.github/workflows/ci.yml); [Dependabot](.github/dependabot.yml) keeps dependencies up to date.
+- Update signing uses the `TAURI_SIGNING_PRIVATE_KEY` repository secret. Without it, releases still publish — just without auto-update files.
+
+## 📄 License
+
+[MIT](LICENSE) — free to use, modify and share.
 
 ---
 

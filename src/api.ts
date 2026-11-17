@@ -32,6 +32,41 @@ export interface AppInfo {
   version: string;
 }
 
+export interface BackupConfig {
+  enabled: boolean;
+  dir: string | null;
+  keep: number;
+}
+
+export interface BackupStatus {
+  config: BackupConfig;
+  dir: string;
+  defaultDir: string;
+  lastBackup: number | null;
+  lastError: string | null;
+  backups: { name: string; createdAt: number; size: number }[];
+}
+
+export interface UpdateInfo {
+  version: string;
+  current: string;
+  notes: string | null;
+  portable: boolean;
+  releasesUrl: string;
+}
+
+export const updateApi = {
+  check: () => invoke<UpdateInfo | null>("check_for_update"),
+  install: () => invoke<void>("install_update"),
+};
+
+export const backupApi = {
+  status: () => invoke<BackupStatus>("backup_status"),
+  setConfig: (config: BackupConfig) => invoke<BackupStatus>("set_backup_config", { config }),
+  now: () => invoke<BackupStatus>("backup_now"),
+  restore: (name: string) => invoke<BackupStatus>("restore_backup", { name }),
+};
+
 export const api = {
   listEntries: (query: string | null, tag: string | null) =>
     invoke<EntrySummary[]>("list_entries", { query, tag }),

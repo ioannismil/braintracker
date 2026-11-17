@@ -286,3 +286,23 @@ kbd {
 .sc-key.bad { border-color: var(--danger); color: var(--danger); }
 .sc-error { color: var(--danger); font-size: 12px; margin: 8px 0 0; }
 @keyframes pulse { 50% { box-shadow: 0 0 0 5px var(--accent-soft); } }
+
+/* ---------- backups ---------- */
+.backup-folder { display: flex; align-items: center; gap: 6px; margin-top: 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 4px 4px 4px 10px; }
+.backup-folder .path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px var(--mono); color: var(--ink-2); user-select: text; }
+.backup-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; font-size: 13px; color: var(--ink-2); }
+.backup-row select { font: inherit; color: var(--ink); background: var(--sheet); border: 1px solid var(--line); border-radius: 6px; padding: 1px 4px; }
+.backup-list { list-style: none; margin: 10px 0 0; padding: 0; border-top: 1px dashed var(--line); }
+.backup-list li { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 12.5px; border-bottom: 1px dashed var(--line); }
+.backup-when { flex: 1; display: flex; align-items: center; gap: 8px; }
+.backup-size { color: var(--ink-3); font: 11.5px var(--mono); }
+.tool:disabled { opacity: 0.5; cursor: default; }
+
+/* ---------- update banner ---------- */
+.update-banner {
+  margin: 0 12px 10px; padding: 9px 12px; border-radius: 10px; font-size: 12.5px;
+  background: var(--accent-soft); border: 1px solid var(--accent); color: var(--ink);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.update-banner .actions { display: flex; gap: 6px; }
+.update-banner .bad { color: var(--danger); }

@@ -2,6 +2,7 @@
   "name": "braintracker",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,6 +13,7 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.5",
+    "@tauri-apps/plugin-dialog": "^2.8.4",
     "@tauri-apps/plugin-opener": "^2.7.3",
     "dompurify": "^3.4.18",
     "marked": "^18.2.1",

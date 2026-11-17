@@ -1,4 +1,6 @@
+mod backup;
 mod db;
+mod updates;
 
 use db::{Db, Entry, EntrySummary, TagCount};
 use serde::{Deserialize, Serialize};
@@ -316,6 +318,47 @@ fn capture_done(app: AppHandle, open_id: Option<i64>, open_main: bool) {
 
 // ---------- app / settings commands ----------
 
+// ---------- updates ----------
+
+#[tauri::command]
+async fn check_for_update(app: AppHandle) -> CmdResult<Option<updates::UpdateInfo>> {
+    updates::check(&app).await
+}
+
+#[tauri::command]
+async fn install_update(app: AppHandle) -> CmdResult<()> {
+    updates::install(&app).await
+}
+
+// ---------- backups ----------
+
+#[tauri::command]
+fn backup_status(app: AppHandle) -> CmdResult<backup::BackupStatus> {
+    backup::status(&app)
+}
+
+#[tauri::command]
+fn set_backup_config(app: AppHandle, config: backup::BackupConfig) -> CmdResult<backup::BackupStatus> {
+    if let Some(dir) = config.dir.as_deref().filter(|d| !d.trim().is_empty()) {
+        std::fs::create_dir_all(dir).map_err(|e| format!("Can’t use that folder: {e}"))?;
+    }
+    backup::save_config(&app, &config)?;
+    backup::status(&app)
+}
+
+// async → runs off the UI thread, since copying screenshots can take a moment.
+#[tauri::command]
+async fn backup_now(app: AppHandle) -> CmdResult<backup::BackupStatus> {
+    backup::run_backup(&app, None)?;
+    backup::status(&app)
+}
+
+#[tauri::command]
+async fn restore_backup(app: AppHandle, name: String) -> CmdResult<backup::BackupStatus> {
+    backup::restore(&app, &name)?;
+    backup::status(&app)
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AppInfo {
@@ -462,6 +505,8 @@ pub fn run() {
             Some(vec!["--minimized"]),
         ))
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
@@ -525,6 +570,14 @@ pub fn run() {
                 .and_then(|s| serde_json::from_str(&s).ok())
                 .unwrap_or_default();
             app.manage(Db(Mutex::new(conn)));
+
+            // Daily automatic backups
+            app.manage(backup::BackupState::default());
+            backup::start_scheduler(app.handle().clone());
+
+            // Auto-update checks
+            app.manage(updates::UpdateState::default());
+            updates::start_checker(app.handle().clone());
 
             // System-wide shortcuts (one may fail if another app already owns it — that's fine).
             let mut hotkeys = Hotkeys { config, ..Default::default() };
@@ -592,6 +645,12 @@ pub fn run() {
             set_shortcuts,
             suspend_shortcuts,
             resume_shortcuts,
+            backup_status,
+            set_backup_config,
+            backup_now,
+            restore_backup,
+            check_for_update,
+            install_update,
             app_info,
             get_autostart,
             set_autostart,

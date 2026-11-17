@@ -42,6 +42,15 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDEwQUJDM0REMTRCMjk5NEEKUldSS21iSVUzY09yRUlsYTNXb3dmMGNrc2tnTlFmSWFKMmFjanFtOXRpSGlmR1Z6MTRGZGRGUSsK",
+      "endpoints": [
+        "https://github.com/ioannismil/braintracker/releases/latest/download/latest.json"
+      ],
+      "windows": { "installMode": "passive" }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": ["nsis"],

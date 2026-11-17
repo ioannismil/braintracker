@@ -6,6 +6,8 @@ import DOMPurify from "dompurify";
 import { api, parseTags, type Entry, type EntrySummary, type TagCount } from "./api";
 import { groupLabel, longDate, relative, shortWhen } from "./format";
 import Settings from "./Settings";
+import UpdateBanner from "./UpdateBanner";
+import type { UpdateInfo } from "./api";
 import { imageFiles, imageNames, insertImages, IMG_BASE, resolveImages } from "./images";
 import {
   DEFAULT_SHORTCUTS,
@@ -60,6 +62,15 @@ export default function App() {
     captureRegistered: true,
   });
   const sc = scInfo.shortcuts;
+  const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  const [updateDismissed, setUpdateDismissed] = useState<string | null>(null);
+
+  useEffect(() => {
+    const un = listen<UpdateInfo>("update-available", (e) => setUpdate(e.payload));
+    return () => {
+      un.then((f) => f());
+    };
+  }, []);
 
   useEffect(() => {
     shortcutsApi.get().then(setScInfo).catch(console.error);
@@ -224,6 +235,14 @@ export default function App() {
       // Something was saved from the quick-capture popup
       listen("entries-changed", () => refresh()),
       listen<number>("open-entry", (e) => openRef.current(e.payload, true)),
+      // A backup was restored: drop the open entry (it may no longer exist) without saving it.
+      listen("data-restored", () => {
+        if (saveTimer.current) window.clearTimeout(saveTimer.current);
+        saveTimer.current = undefined;
+        draftRef.current = null;
+        setDraft(null);
+        refresh();
+      }),
     ];
     const clock = window.setInterval(() => tick((n) => n + 1), 30_000);
     return () => {
@@ -363,6 +382,10 @@ export default function App() {
           />
           <kbd>{pretty(sc.search)}</kbd>
         </div>
+
+        {update && updateDismissed !== update.version && (
+          <UpdateBanner info={update} beforeInstall={flush} onDismiss={() => setUpdateDismissed(update.version)} />
+        )}
 
         <button className="new-btn" onClick={() => newEntry(searching && !entries.length ? query.trim() : "")}>
           <span>＋ New entry</span>
@@ -575,7 +598,18 @@ export default function App() {
         )}
       </main>
 
-      {settingsOpen && <Settings info={scInfo} onChange={setScInfo} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && (
+        <Settings
+          info={scInfo}
+          onChange={setScInfo}
+          onClose={() => setSettingsOpen(false)}
+          onUpdateFound={(u) => {
+            setUpdate(u);
+            setUpdateDismissed(null);
+          }}
+          beforeInstall={flush}
+        />
+      )}
     </div>
   );
 }
