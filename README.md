@@ -35,7 +35,7 @@ Press <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>E</kbd> anywhere — a small popup a
 <td width="50%" valign="top">
 
 ### 🔎 Find anything instantly
-Full-text search across titles, notes and tags, as you type, with highlighted matches. Partial words match, so `dock` finds *Docker*. Filter by tag with one click.
+Full-text search across titles, notes and tags, as you type, with highlighted matches. Partial words match, so `dock` finds *Docker*. Narrow it down with filters like `tag:docker`, `has:image` or `after:2026-10`.
 
 </td>
 </tr>
@@ -43,7 +43,7 @@ Full-text search across titles, notes and tags, as you type, with highlighted ma
 <td valign="top">
 
 ### 📝 Notes that hold the "how"
-Markdown with code blocks, lists and links. Paste screenshots straight in with <kbd>Ctrl</kbd> <kbd>V</kbd>. Everything auto-saves as you type.
+Markdown with code blocks (each with a one-click **Copy** button), lists and links. Paste screenshots straight in with <kbd>Ctrl</kbd> <kbd>V</kbd>. Everything auto-saves as you type.
 
 </td>
 <td valign="top">
@@ -81,6 +81,20 @@ Checks GitHub for new releases and installs them with one click — your data an
 
 </td>
 </tr>
+<tr>
+<td valign="top">
+
+### ↺ Nothing is lost by accident
+Deleting moves an entry to the **Trash** for 30 days (with an instant *Undo*). Every entry keeps an **edit history** — step back to any earlier version.
+
+</td>
+<td valign="top">
+
+### 📦 Bring your notes with you
+**Import** folders of Markdown or text notes — titles, tags, dates and images included. Round-trips cleanly with BrainTracker's own Markdown export.
+
+</td>
+</tr>
 </table>
 
 ## 📥 Download
@@ -111,6 +125,20 @@ Grab the latest version from the **[Releases page](https://github.com/ioannismil
 
 All of these can be changed in **Settings → Keyboard shortcuts** — click one, press the new keys. Shortcuts follow the physical key, so they work on any keyboard layout.
 
+### 🔎 Search filters
+
+Type these in the search box, on their own or together with words:
+
+| Filter | Finds entries… |
+|---|---|
+| `tag:docker` | tagged *docker* (repeat for several tags) |
+| `after:2026-10` · `before:2026` | created on/after or before a year, month or day |
+| `on:2026-11-17` · `on:2026-11` | created on that day / in that month or year |
+| `has:image` · `has:code` · `has:link` | with a screenshot, code, or a web link |
+| `is:pinned` | that are pinned |
+
+Example: `vpn tag:home after:2026-01 has:code`
+
 <details>
 <summary><b>More keys</b></summary>
 
@@ -135,7 +163,11 @@ Inside you'll find `braintracker.db` (all entries) and `images\` (pasted screens
 
 **Backups** run automatically once a day when something changed, into `Documents\BrainTracker Backups` (portable: `data\backups`). Change the folder, how many to keep, or restore one in **Settings → Automatic backups**. A restore always saves a *before-restore* snapshot of your current data first, and keeps your current settings.
 
-**Export:** **Settings → Export** writes every entry as a Markdown file — screenshots included — to `Documents\BrainTracker Export`.
+**Trash & history:** deleted entries wait in the **Trash** (sidebar, bottom) for 30 days. While you edit, a version is saved at most every 10 minutes (last 50 per entry) — open **↺ History** in the editor to compare and restore.
+
+**Export & import:** **Settings → Export** writes every entry as a Markdown file — screenshots included — to `Documents\BrainTracker Export`. **Settings → Import** reads Markdown/text files or whole folders back in (titles, tags, dates, front matter and local images), skipping anything already imported.
+
+**Clean up:** **Settings → Clean up screenshots** removes pasted images no entry, trashed entry or old version still uses.
 
 > [!TIP]
 > Any copy of `BrainTracker.exe` becomes portable when a file named `portable.txt` sits next to it.
@@ -163,10 +195,16 @@ braintracker/
 │  ├─ App.tsx                main window: sidebar, list, editor
 │  ├─ Capture.tsx            quick-capture popup
 │  ├─ Settings.tsx           settings dialog & shortcut recorder
+│  ├─ Backups.tsx · DataTools.tsx   backups, import, image cleanup
+│  ├─ Trash.tsx · History.tsx       trash and edit-history dialogs
+│  ├─ markdown.ts            Markdown rendering + code copy buttons
 │  ├─ shortcuts.ts           layout-independent shortcut matching
 │  └─ images.ts              screenshot paste / rendering
 ├─ src-tauri/                Rust backend (Tauri 2)
-│  ├─ src/db.rs              SQLite schema + FTS5 full-text search
+│  ├─ src/db.rs              SQLite schema, FTS5 search & filters, trash, history
+│  ├─ src/backup.rs          daily backups & restore
+│  ├─ src/import.rs          Markdown/text import
+│  ├─ src/updates.rs         auto-update from GitHub Releases
 │  ├─ src/lib.rs             commands, tray, global shortcuts, autostart, portable mode
 │  └─ tauri.conf.json        windows, bundle & version (major.minor)
 ├─ scripts/set-version.mjs   stamps the release version into all manifests

@@ -1,5 +1,6 @@
 mod backup;
 mod db;
+mod import;
 mod updates;
 
 use db::{Db, Entry, EntrySummary, TagCount};
@@ -252,10 +253,18 @@ fn set_pinned(db: State<Db>, id: i64, pinned: bool) -> CmdResult<()> {
     db::set_pinned(&conn, id, pinned).map_err(err)
 }
 
+/// Moves an entry to the trash (kept for 30 days).
 #[tauri::command]
 fn delete_entry(db: State<Db>, id: i64) -> CmdResult<()> {
     let conn = db.0.lock().map_err(err)?;
-    db::delete_entry(&conn, id).map_err(err)
+    db::trash_entry(&conn, id).map_err(err)
+}
+
+/// Deletes for good — used for blank entries you created and abandoned.
+#[tauri::command]
+fn discard_entry(db: State<Db>, id: i64) -> CmdResult<()> {
+    let conn = db.0.lock().map_err(err)?;
+    db::purge_entry(&conn, id).map_err(err)
 }
 
 #[tauri::command]
@@ -264,9 +273,85 @@ fn list_tags(db: State<Db>) -> CmdResult<Vec<TagCount>> {
     db::list_tags(&conn).map_err(err)
 }
 
+// ---------- trash ----------
+
+#[tauri::command]
+fn list_trash(db: State<Db>) -> CmdResult<Vec<db::TrashItem>> {
+    let conn = db.0.lock().map_err(err)?;
+    db::list_trash(&conn).map_err(err)
+}
+
+#[tauri::command]
+fn trash_count(db: State<Db>) -> CmdResult<i64> {
+    let conn = db.0.lock().map_err(err)?;
+    db::trash_count(&conn).map_err(err)
+}
+
+#[tauri::command]
+fn restore_entry(db: State<Db>, id: i64) -> CmdResult<()> {
+    let conn = db.0.lock().map_err(err)?;
+    db::restore_entry(&conn, id).map_err(err)
+}
+
+#[tauri::command]
+fn purge_entry(db: State<Db>, id: i64) -> CmdResult<()> {
+    let conn = db.0.lock().map_err(err)?;
+    db::purge_entry(&conn, id).map_err(err)
+}
+
+#[tauri::command]
+fn empty_trash(db: State<Db>) -> CmdResult<usize> {
+    let conn = db.0.lock().map_err(err)?;
+    db::purge_trash(&conn, 0).map_err(err)
+}
+
+// ---------- history ----------
+
+#[tauri::command]
+fn list_versions(db: State<Db>, entry_id: i64) -> CmdResult<Vec<db::VersionSummary>> {
+    let conn = db.0.lock().map_err(err)?;
+    db::list_versions(&conn, entry_id).map_err(err)
+}
+
+#[tauri::command]
+fn get_version(db: State<Db>, id: i64) -> CmdResult<Option<db::Version>> {
+    let conn = db.0.lock().map_err(err)?;
+    db::get_version(&conn, id).map_err(err)
+}
+
+#[tauri::command]
+fn restore_version(db: State<Db>, entry_id: i64, version_id: i64) -> CmdResult<Option<Entry>> {
+    let conn = db.0.lock().map_err(err)?;
+    db::restore_version(&conn, entry_id, version_id).map_err(err)
+}
+
+// ---------- import ----------
+
+#[tauri::command]
+async fn import_markdown(app: AppHandle, paths: Vec<String>) -> CmdResult<import::ImportResult> {
+    import::import_paths(&app, &paths)
+}
+
 // ---------- images ----------
 
 static IMAGE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Saves image bytes into the images folder under a fresh unique name.
+fn store_image(app: &AppHandle, bytes: &[u8], ext: &str) -> Result<String, String> {
+    let ext = ext.to_ascii_lowercase();
+    let ext = match ext.as_str() {
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" => ext,
+        _ => "png".into(),
+    };
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let n = IMAGE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let name = format!("{ms}-{n}.{ext}");
+    std::fs::write(images_dir(app)?.join(&name), bytes).map_err(err)?;
+    Ok(name)
+}
 
 /// Receives raw image bytes (header `x-ext` = file extension) and returns the stored file name.
 #[tauri::command]
@@ -278,20 +363,53 @@ fn save_image(app: AppHandle, request: Request<'_>) -> CmdResult<String> {
         .headers()
         .get("x-ext")
         .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_ascii_lowercase())
-        .unwrap_or_else(|| "png".into());
-    let ext = match ext.as_str() {
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" => ext,
-        _ => "png".into(),
+        .unwrap_or("png")
+        .to_string();
+    store_image(&app, bytes, &ext)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UnusedImages {
+    count: usize,
+    bytes: u64,
+}
+
+/// Screenshots in the images folder that no entry, trashed entry or old version uses.
+fn unused_image_files(app: &AppHandle) -> Result<Vec<(PathBuf, u64)>, String> {
+    let used = {
+        let db = app.state::<Db>();
+        let conn = db.0.lock().map_err(err)?;
+        db::referenced_images(&conn).map_err(err)?
     };
-    let ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let n = IMAGE_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let name = format!("{ms}-{n}.{ext}");
-    std::fs::write(images_dir(&app)?.join(&name), bytes).map_err(err)?;
-    Ok(name)
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(images_dir(app)?).map_err(err)?.flatten() {
+        let path = e.path();
+        let name = e.file_name().to_string_lossy().into_owned();
+        if path.is_file() && safe_image_name(&name) && !used.contains(&name) {
+            out.push((path, e.metadata().map(|m| m.len()).unwrap_or(0)));
+        }
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+fn find_unused_images(app: AppHandle) -> CmdResult<UnusedImages> {
+    let files = unused_image_files(&app)?;
+    Ok(UnusedImages { count: files.len(), bytes: files.iter().map(|f| f.1).sum() })
+}
+
+#[tauri::command]
+fn delete_unused_images(app: AppHandle) -> CmdResult<UnusedImages> {
+    let files = unused_image_files(&app)?;
+    let mut done = UnusedImages { count: 0, bytes: 0 };
+    for (path, size) in files {
+        if std::fs::remove_file(&path).is_ok() {
+            done.count += 1;
+            done.bytes += size;
+        }
+    }
+    Ok(done)
 }
 
 // ---------- window commands ----------
@@ -569,6 +687,8 @@ pub fn run() {
             let config: Shortcuts = db::get_setting(&conn, "shortcuts")?
                 .and_then(|s| serde_json::from_str(&s).ok())
                 .unwrap_or_default();
+            // Entries trashed more than 30 days ago are deleted for good.
+            let _ = db::purge_expired_trash(&conn);
             app.manage(Db(Mutex::new(conn)));
 
             // Daily automatic backups
@@ -637,7 +757,19 @@ pub fn run() {
             update_entry,
             set_pinned,
             delete_entry,
+            discard_entry,
             list_tags,
+            list_trash,
+            trash_count,
+            restore_entry,
+            purge_entry,
+            empty_trash,
+            list_versions,
+            get_version,
+            restore_version,
+            import_markdown,
+            find_unused_images,
+            delete_unused_images,
             save_image,
             hide_capture,
             capture_done,

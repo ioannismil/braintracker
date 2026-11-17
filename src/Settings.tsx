@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { api, updateApi, type AppInfo, type UpdateInfo } from "./api";
 import Backups from "./Backups";
+import DataTools from "./DataTools";
 import UpdateBanner from "./UpdateBanner";
 import {
   ACTIONS,
@@ -218,6 +219,8 @@ export default function Settings({ info, onChange, onClose, onUpdateFound, befor
         </div>
 
         <Backups />
+
+        <DataTools />
 
         <div className="setting">
           <div>

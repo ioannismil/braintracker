@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { openUrl } from "@tauri-apps/plugin-opener";
-import { marked } from "marked";
-import DOMPurify from "dompurify";
-import { api, parseTags, type Entry, type EntrySummary, type TagCount } from "./api";
+import { api, parseTags, trashApi, type Entry, type EntrySummary, type TagCount } from "./api";
 import { groupLabel, longDate, relative, shortWhen } from "./format";
 import Settings from "./Settings";
 import UpdateBanner from "./UpdateBanner";
+import Trash from "./Trash";
+import History from "./History";
 import type { UpdateInfo } from "./api";
-import { imageFiles, imageNames, insertImages, IMG_BASE, resolveImages } from "./images";
+import { imageFiles, imageNames, insertImages, IMG_BASE } from "./images";
+import { handleMarkdownClick, isInsideCopyButton, renderMarkdown } from "./markdown";
 import {
   DEFAULT_SHORTCUTS,
   matches,
@@ -17,7 +17,7 @@ import {
   type ShortcutsInfo,
 } from "./shortcuts";
 
-marked.setOptions({ gfm: true, breaks: true });
+const SEARCH_TIPS = ["tag:docker", "has:image", "has:code", "after:2026-10", "on:2026-11-17", "is:pinned"];
 
 type Draft = {
   id: number;
@@ -53,8 +53,14 @@ export default function App() {
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [preview, setPreview] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
   const [tagFocus, setTagFocus] = useState(false);
+  const [searchFocus, setSearchFocus] = useState(false);
+  const [trashOpen, setTrashOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [trashCount, setTrashCount] = useState(0);
+  const [undo, setUndo] = useState<{ id: number; title: string } | null>(null);
+  const undoTimer = useRef<number | undefined>(undefined);
+  const dialogOpen = settingsOpen || trashOpen || historyOpen;
   const [, tick] = useState(0);
   const [scInfo, setScInfo] = useState<ShortcutsInfo>({
     shortcuts: DEFAULT_SHORTCUTS,
@@ -100,10 +106,15 @@ export default function App() {
   const refresh = useCallback(async () => {
     const my = ++seq.current;
     const { query, tag } = filterRef.current;
-    const [list, t] = await Promise.all([api.listEntries(query.trim() || null, tag), api.listTags()]);
+    const [list, t, trashed] = await Promise.all([
+      api.listEntries(query.trim() || null, tag),
+      api.listTags(),
+      trashApi.count(),
+    ]);
     if (my !== seq.current) return; // a newer search already answered
     setEntries(list);
     setTags(t);
+    setTrashCount(trashed);
   }, []);
 
   useEffect(() => {
@@ -146,7 +157,7 @@ export default function App() {
   const leaveCurrent = async () => {
     await flush();
     const d = draftRef.current;
-    if (d && isBlank(d)) await api.deleteEntry(d.id);
+    if (d && isBlank(d)) await api.discardEntry(d.id);
   };
 
   const openEntry = async (id: number, focusBody = false) => {
@@ -155,7 +166,6 @@ export default function App() {
       const e = await api.getEntry(id);
       if (!e) return refresh();
       setCurrent(toDraft(e));
-      setConfirmDelete(false);
       setSaveState("idle");
       refresh();
     }
@@ -167,7 +177,6 @@ export default function App() {
     const e = await api.createEntry(title, tag ? [tag] : []);
     setCurrent(toDraft(e));
     setPreview(false);
-    setConfirmDelete(false);
     setSaveState("idle");
     filterRef.current = { ...filterRef.current, query: "" };
     setQuery("");
@@ -183,14 +192,36 @@ export default function App() {
     refresh();
   };
 
+  /** Moves the open entry to the trash and offers an Undo for a few seconds. */
   const deleteCurrent = async () => {
+    await flush();
     const d = draftRef.current;
     if (!d) return;
-    if (saveTimer.current) window.clearTimeout(saveTimer.current);
-    await api.deleteEntry(d.id);
+    if (isBlank(d)) {
+      await api.discardEntry(d.id);
+    } else {
+      await api.deleteEntry(d.id);
+      setUndo({ id: d.id, title: d.title.trim() || "Untitled" });
+      if (undoTimer.current) window.clearTimeout(undoTimer.current);
+      undoTimer.current = window.setTimeout(() => setUndo(null), 8000);
+    }
     setCurrent(null);
-    setConfirmDelete(false);
     refresh();
+  };
+
+  const undoDelete = async () => {
+    if (!undo) return;
+    if (undoTimer.current) window.clearTimeout(undoTimer.current);
+    const id = undo.id;
+    setUndo(null);
+    await trashApi.restore(id);
+    await refresh();
+    openEntry(id);
+  };
+
+  const openHistory = async () => {
+    await flush();
+    setHistoryOpen(true);
   };
 
   const focusSearch = () => {
@@ -202,7 +233,7 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (settingsOpen) return; // the settings dialog handles its own keys
+      if (dialogOpen) return; // dialogs handle their own keys
       if (matches(e, sc.newEntry)) {
         e.preventDefault();
         newEntry();
@@ -292,13 +323,7 @@ export default function App() {
     return out;
   }, [entries, searching]);
 
-  const html = useMemo(
-    () =>
-      draft && preview
-        ? DOMPurify.sanitize(marked.parse(resolveImages(draft.body) || "*Nothing written yet.*", { async: false }) as string)
-        : "",
-    [draft?.body, preview],
-  );
+  const html = useMemo(() => (draft && preview ? renderMarkdown(draft.body) : ""), [draft?.body, preview]);
 
   const images = useMemo(() => (draft ? imageNames(draft.body) : []), [draft?.body]);
 
@@ -341,15 +366,6 @@ export default function App() {
     }
   };
 
-  const onPreviewClick = (e: React.MouseEvent) => {
-    const a = (e.target as HTMLElement).closest("a");
-    if (a) {
-      e.preventDefault();
-      const href = a.getAttribute("href") ?? "";
-      if (/^(https?:|mailto:)/i.test(href)) openUrl(href);
-    }
-  };
-
   const status =
     saveState === "saving" ? "Saving…" : saveState === "error" ? "Couldn’t save — retrying on next edit" : draft?.dirty ? "Editing" : "Saved";
 
@@ -377,11 +393,28 @@ export default function App() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onSearchKey}
+            onFocus={() => setSearchFocus(true)}
+            onBlur={() => setTimeout(() => setSearchFocus(false), 150)}
             placeholder="Search everything…"
             spellCheck={false}
           />
           <kbd>{pretty(sc.search)}</kbd>
         </div>
+        {searchFocus && !query && (
+          <div className="search-tips">
+            <span>Filters:</span>
+            {SEARCH_TIPS.map((t) => (
+              <button
+                key={t}
+                className="chip"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => setQuery(t.startsWith("tag:") ? "tag:" : `${t} `)}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+        )}
 
         {update && updateDismissed !== update.version && (
           <UpdateBanner info={update} beforeInstall={flush} onDismiss={() => setUpdateDismissed(update.version)} />
@@ -460,6 +493,12 @@ export default function App() {
             </div>
           )}
         </nav>
+
+        <footer className="sidebar-foot">
+          <button className="tool" onClick={() => setTrashOpen(true)} title="Deleted entries (kept for 30 days)">
+            🗑 Trash{trashCount > 0 && <span className="count"> {trashCount}</span>}
+          </button>
+        </footer>
       </aside>
 
       <main className="editor">
@@ -474,20 +513,12 @@ export default function App() {
               <button className={`tool ${preview ? "on" : ""}`} onClick={() => setPreview((p) => !p)} title={sc.preview}>
                 {preview ? "✎ Edit" : "◉ Preview"}
               </button>
-              {confirmDelete ? (
-                <>
-                  <button className="tool danger" onClick={deleteCurrent}>
-                    Delete for good
-                  </button>
-                  <button className="tool" onClick={() => setConfirmDelete(false)}>
-                    Cancel
-                  </button>
-                </>
-              ) : (
-                <button className="tool" onClick={() => setConfirmDelete(true)} title="Delete entry">
-                  🗑
-                </button>
-              )}
+              <button className="tool" onClick={openHistory} title="Earlier versions of this entry">
+                ↺ History
+              </button>
+              <button className="tool" onClick={deleteCurrent} title="Move to trash (you can undo)">
+                🗑
+              </button>
             </div>
 
             <div className="sheet">
@@ -534,8 +565,8 @@ export default function App() {
               {preview ? (
                 <article
                   className="markdown"
-                  onClick={onPreviewClick}
-                  onDoubleClick={() => setPreview(false)}
+                  onClick={handleMarkdownClick}
+                  onDoubleClick={(e) => !isInsideCopyButton(e) && setPreview(false)}
                   dangerouslySetInnerHTML={{ __html: html }}
                 />
               ) : (
@@ -597,6 +628,44 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {undo && (
+        <div className="toast" role="status">
+          <span>
+            Moved “{undo.title}” to the trash
+          </span>
+          <button className="link" onClick={undoDelete}>
+            Undo
+          </button>
+          <button className="icon-btn" onClick={() => setUndo(null)} aria-label="Dismiss">
+            ✕
+          </button>
+        </div>
+      )}
+
+      {trashOpen && (
+        <Trash
+          onClose={() => setTrashOpen(false)}
+          onChanged={refresh}
+          onRestored={(id) => {
+            setTrashOpen(false);
+            openEntry(id);
+          }}
+        />
+      )}
+
+      {historyOpen && draft && (
+        <History
+          entryId={draft.id}
+          onClose={() => setHistoryOpen(false)}
+          onRestored={(e) => {
+            setHistoryOpen(false);
+            setCurrent(toDraft(e));
+            setSaveState("saved");
+            refresh();
+          }}
+        />
+      )}
 
       {settingsOpen && (
         <Settings
