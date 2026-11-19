@@ -145,7 +145,7 @@ Example: `vpn tag:home after:2026-01 has:code`
 | Where | Keys |
 |---|---|
 | Search box | <kbd>↑</kbd> <kbd>↓</kbd> browse results · <kbd>Enter</kbd> open · <kbd>Enter</kbd> with no results creates an entry with that title · <kbd>Esc</kbd> clear |
-| Quick capture | <kbd>Enter</kbd> save · <kbd>Shift</kbd>+<kbd>Enter</kbd> add notes · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> save & open · <kbd>Ctrl</kbd>+<kbd>O</kbd> open app · <kbd>Esc</kbd> hide |
+| Quick capture | <kbd>Enter</kbd> save (stays open for the next one) · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> save & close · <kbd>Shift</kbd>+<kbd>Enter</kbd> jump to notes · <kbd>Ctrl</kbd>+<kbd>O</kbd> open app · <kbd>Esc</kbd> close — all changeable in Settings |
 | Editor | <kbd>Tab</kbd> indents · <kbd>Ctrl</kbd>+<kbd>V</kbd> pastes screenshots · double-click the preview to edit |
 
 </details>

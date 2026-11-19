@@ -126,6 +126,7 @@ export const api = {
   createEntry: (title?: string, tags?: string[], body?: string) =>
     invoke<Entry>("create_entry", { title: title ?? null, body: body ?? null, tags: tags ?? null }),
   hideCapture: () => invoke<void>("hide_capture"),
+  captureSaved: () => invoke<void>("capture_saved"),
   captureDone: (openId: number | null, openMain = false) =>
     invoke<void>("capture_done", { openId, openMain }),
   updateEntry: (id: number, title: string, body: string, tags: string[]) =>

@@ -30,7 +30,8 @@ fn err<E: std::fmt::Display>(e: E) -> String {
 // ---------- shortcuts ----------
 
 /// Every configurable shortcut, stored as "Ctrl+Shift+E"-style strings.
-/// `show_main` and `capture` are system-wide; the rest only work inside the app.
+/// `show_main` and `capture` are system-wide; `capture_*` only work in the quick-capture
+/// popup; the rest only work in the main window.
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase", default)]
 struct Shortcuts {
@@ -40,6 +41,11 @@ struct Shortcuts {
     search: String,
     preview: String,
     settings: String,
+    capture_save: String,
+    capture_save_close: String,
+    capture_notes: String,
+    capture_open_app: String,
+    capture_hide: String,
 }
 
 impl Default for Shortcuts {
@@ -51,6 +57,11 @@ impl Default for Shortcuts {
             search: "Ctrl+K".into(),
             preview: "Ctrl+E".into(),
             settings: "Ctrl+,".into(),
+            capture_save: "Enter".into(),
+            capture_save_close: "Ctrl+Shift+Enter".into(),
+            capture_notes: "Shift+Enter".into(),
+            capture_open_app: "Ctrl+O".into(),
+            capture_hide: "Escape".into(),
         }
     }
 }
@@ -421,6 +432,12 @@ fn hide_capture(app: AppHandle) {
     }
 }
 
+/// Called by the capture popup after a save that keeps the popup open for the next entry.
+#[tauri::command]
+fn capture_saved(app: AppHandle) {
+    let _ = app.emit_to(MAIN, "entries-changed", ());
+}
+
 /// Called by the capture popup after saving (or to jump to the full app).
 #[tauri::command]
 fn capture_done(app: AppHandle, open_id: Option<i64>, open_main: bool) {
@@ -773,6 +790,7 @@ pub fn run() {
             save_image,
             hide_capture,
             capture_done,
+            capture_saved,
             get_shortcuts,
             set_shortcuts,
             suspend_shortcuts,

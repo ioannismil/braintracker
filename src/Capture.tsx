@@ -2,10 +2,20 @@ import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api, parseTags, type TagCount } from "./api";
 import { imageFiles, imageNames, insertImages, IMG_BASE } from "./images";
+import {
+  ACTIONS,
+  comboFromEvent,
+  DEFAULT_SHORTCUTS,
+  hasCommandModifier,
+  pretty,
+  shortcutsApi,
+  type Shortcuts,
+  type ShortcutsInfo,
+} from "./shortcuts";
 
 /**
- * The quick-capture popup (Ctrl+Shift+Space from anywhere).
- * Enter on the title saves a one-liner; notes and tags are optional.
+ * The quick-capture popup (system-wide shortcut, configurable in Settings).
+ * Its own keys (save, save & close, jump to notes, open app, close) are configurable too.
  * Text survives if you dismiss it, so nothing is lost by clicking away.
  */
 export default function Capture() {
@@ -15,13 +25,31 @@ export default function Capture() {
   const [tags, setTags] = useState<TagCount[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [saved, setSaved] = useState("");
+  const [sc, setSc] = useState<Shortcuts>(DEFAULT_SHORTCUTS);
 
   const titleRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
+  const tagsRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    shortcutsApi.get().then((i) => setSc(i.shortcuts)).catch(() => {});
+    const un = listen<ShortcutsInfo>("shortcuts-changed", (e) => setSc(e.payload.shortcuts));
+    return () => {
+      un.then((f) => f());
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!saved) return;
+    const t = setTimeout(() => setSaved(""), 2500);
+    return () => clearTimeout(t);
+  }, [saved]);
 
   useEffect(() => {
     const onShown = () => {
       setError("");
+      setSaved("");
       api.listTags().then(setTags).catch(() => {});
       setTimeout(() => {
         titleRef.current?.focus();
@@ -37,48 +65,33 @@ export default function Capture() {
 
   const empty = !title.trim() && !body.trim();
 
-  const save = async (openAfter: boolean) => {
+  /** Saves the entry; `close` hides the popup, otherwise it clears for the next one. */
+  const save = async (close: boolean) => {
     if (busy) return;
     if (empty) {
-      if (openAfter) api.captureDone(null, true);
+      if (close) api.hideCapture();
       return;
     }
     setBusy(true);
     try {
       const finalTitle = title.trim() || body.trim().split("\n")[0].replace(/!\[[^\]]*\]\([^)]*\)/g, "").slice(0, 80).trim() || "Untitled";
-      const e = await api.createEntry(finalTitle, parseTags(tagsText), body);
+      await api.createEntry(finalTitle, parseTags(tagsText), body);
       setTitle("");
       setBody("");
       setTagsText("");
-      await api.captureDone(openAfter ? e.id : null);
+      setError("");
+      if (close) {
+        await api.captureDone(null);
+      } else {
+        await api.captureSaved();
+        setSaved(finalTitle);
+        api.listTags().then(setTags).catch(() => {});
+        titleRef.current?.focus();
+      }
     } catch (e) {
       setError(`Couldn’t save: ${e}`);
     } finally {
       setBusy(false);
-    }
-  };
-
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      api.hideCapture();
-    } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault();
-      save(e.shiftKey);
-    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o") {
-      e.preventDefault();
-      api.captureDone(null, true);
-    }
-  };
-
-  const addImages = async (files: File[], e: React.SyntheticEvent) => {
-    if (!files.length || !bodyRef.current) return;
-    e.preventDefault();
-    try {
-      const v = await insertImages(bodyRef.current, files);
-      if (v !== null) setBody(v);
-    } catch (err) {
-      setError(`Couldn’t attach image: ${err}`);
     }
   };
 
@@ -95,6 +108,47 @@ export default function Capture() {
     setTagsText(p.filter(Boolean).join(", ") + ", ");
   };
 
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.nativeEvent.isComposing) return;
+    const combo = comboFromEvent(e.nativeEvent);
+    if (!combo) return;
+    const inNotes = e.target === bodyRef.current;
+    const inTags = e.target === tagsRef.current;
+
+    // Enter in the tags box completes the suggested tag first.
+    if (inTags && combo === "Enter" && suggestions.length) {
+      e.preventDefault();
+      pickTag(suggestions[0]);
+      return;
+    }
+    // Plain Enter / Shift+Enter type a new line in the notes box rather than firing a shortcut.
+    const fires = (c: string) => c === combo && !(inNotes && c.endsWith("Enter") && !hasCommandModifier(c));
+    const run = (fn: () => void) => {
+      e.preventDefault();
+      fn();
+    };
+
+    if (fires(sc.captureSaveClose)) run(() => save(true));
+    else if (fires(sc.captureSave)) run(() => save(false));
+    else if (fires(sc.captureNotes)) run(() => bodyRef.current?.focus());
+    else if (fires(sc.captureOpenApp)) run(() => api.captureDone(null, true));
+    else if (fires(sc.captureHide)) run(() => api.hideCapture());
+    // Ctrl+Enter always saves (handy from the notes box) unless it's bound to something else.
+    else if (combo === "Ctrl+Enter" && !ACTIONS.some((a) => a.scope === "capture" && sc[a.id] === combo))
+      run(() => save(false));
+  };
+
+  const addImages = async (files: File[], e: React.SyntheticEvent) => {
+    if (!files.length || !bodyRef.current) return;
+    e.preventDefault();
+    try {
+      const v = await insertImages(bodyRef.current, files);
+      if (v !== null) setBody(v);
+    } catch (err) {
+      setError(`Couldn’t attach image: ${err}`);
+    }
+  };
+
   const images = imageNames(body);
 
   return (
@@ -107,10 +161,14 @@ export default function Capture() {
           Quick capture
         </span>
         <span className="spacer" data-tauri-drag-region />
-        <button className="tool" onClick={() => api.captureDone(null, true)} title="Open BrainTracker (Ctrl+O)">
+        <button
+          className="tool"
+          onClick={() => api.captureDone(null, true)}
+          title={`Open BrainTracker (${pretty(sc.captureOpenApp)})`}
+        >
           Open app ↗
         </button>
-        <button className="icon-btn" onClick={() => api.hideCapture()} title="Close (Esc)">
+        <button className="icon-btn" onClick={() => api.hideCapture()} title={`Close (${pretty(sc.captureHide)})`}>
           ✕
         </button>
       </header>
@@ -120,13 +178,6 @@ export default function Capture() {
         className="capture-title"
         value={title}
         onChange={(e) => setTitle(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) {
-            e.preventDefault();
-            if (e.shiftKey) bodyRef.current?.focus();
-            else save(false);
-          }
-        }}
         placeholder="What did you just do?"
         spellCheck={false}
       />
@@ -154,15 +205,9 @@ export default function Capture() {
       <div className="capture-tags">
         <span className="hash">#</span>
         <input
+          ref={tagsRef}
           value={tagsText}
           onChange={(e) => setTagsText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.ctrlKey) {
-              e.preventDefault();
-              if (suggestions.length) pickTag(suggestions[0]);
-              else save(false);
-            }
-          }}
           placeholder="tags (optional)"
           spellCheck={false}
         />
@@ -176,15 +221,22 @@ export default function Capture() {
       <footer className="capture-foot">
         {error ? (
           <span className="bad">{error}</span>
+        ) : saved ? (
+          <span className="good">✓ Saved “{saved}”</span>
         ) : (
           <span>
-            <kbd>Enter</kbd> save · <kbd>Shift Enter</kbd> add notes · <kbd>Ctrl Shift Enter</kbd> save &amp; open ·{" "}
-            <kbd>Esc</kbd> hide
+            <kbd>{pretty(sc.captureSave)}</kbd> save · <kbd>{pretty(sc.captureSaveClose)}</kbd> save &amp; close ·{" "}
+            <kbd>{pretty(sc.captureNotes)}</kbd> notes · <kbd>{pretty(sc.captureHide)}</kbd> close
           </span>
         )}
-        <button className="primary small" disabled={busy || empty} onClick={() => save(false)}>
-          Save
-        </button>
+        <span className="capture-actions">
+          <button className="tool" disabled={busy || empty} onClick={() => save(false)}>
+            Save
+          </button>
+          <button className="primary small" disabled={busy || empty} onClick={() => save(true)}>
+            Save &amp; close
+          </button>
+        </span>
       </footer>
     </div>
   );

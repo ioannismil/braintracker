@@ -8,13 +8,21 @@ import {
   ACTIONS,
   comboFromEvent,
   DEFAULT_SHORTCUTS,
+  findClash,
   isUsableCombo,
   pretty,
   shortcutsApi,
   type ShortcutAction,
+  type ShortcutScope,
   type Shortcuts,
   type ShortcutsInfo,
 } from "./shortcuts";
+
+const GROUPS: { scope: ShortcutScope; title: string }[] = [
+  { scope: "global", title: "Work anywhere in Windows" },
+  { scope: "app", title: "In the main window" },
+  { scope: "capture", title: "In quick capture" },
+];
 
 interface Props {
   info: ShortcutsInfo;
@@ -76,21 +84,27 @@ export default function Settings({ info, onChange, onClose, onUpdateFound, befor
     // Release system-wide shortcuts so pressing the current combo doesn't fire it.
     shortcutsApi.suspend().catch(() => {});
 
+    const scope = ACTIONS.find((a) => a.id === recording)!.scope;
     const onKey = (e: KeyboardEvent) => {
       e.preventDefault();
       e.stopPropagation();
-      if (e.key === "Escape" && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey) {
+      // Esc cancels — except in quick capture, where Esc is a valid key (click the button again to cancel).
+      if (scope !== "capture" && e.key === "Escape" && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey) {
         setRecording(null);
         return;
       }
       const combo = comboFromEvent(e);
       if (!combo) return; // only a modifier so far — keep waiting
-      if (!isUsableCombo(combo)) {
-        setScError("Include Ctrl, Alt or Win so it doesn’t fire while you type.");
+      if (!isUsableCombo(combo, scope)) {
+        setScError(
+          scope === "capture"
+            ? "Use Enter or Esc (Shift allowed), an F-key, or include Ctrl, Alt or Win."
+            : "Include Ctrl, Alt or Win so it doesn’t fire while you type.",
+        );
         return;
       }
       const current = infoRef.current.shortcuts;
-      const clash = ACTIONS.find((a) => a.id !== recording && current[a.id] === combo);
+      const clash = findClash(current, recording, combo);
       if (clash) {
         setScError(`${combo} is already used for “${clash.label}”.`);
         return;
@@ -160,7 +174,7 @@ export default function Settings({ info, onChange, onClose, onUpdateFound, befor
           <div className="setting-head">
             <div>
               <strong>Keyboard shortcuts</strong>
-              <p>Click a shortcut, then press the new keys. Esc cancels.</p>
+              <p>Click a shortcut, then press the new keys. Click it again to cancel.</p>
             </div>
             {!isDefault && (
               <button className="tool" onClick={() => apply(DEFAULT_SHORTCUTS)}>
@@ -168,32 +182,36 @@ export default function Settings({ info, onChange, onClose, onUpdateFound, befor
               </button>
             )}
           </div>
-          <div className="sc-list">
-            {ACTIONS.map((a) => (
-              <div key={a.id} className="sc-row">
-                <span className="sc-label">
-                  {a.label}
-                  {a.global && <span className="badge">works anywhere</span>}
-                  {unavailable(a.id) && recording !== a.id && (
-                    <span className="sc-warn">in use by another app — pick another</span>
-                  )}
-                </span>
-                <button
-                  className={`sc-key ${recording === a.id ? "rec" : ""} ${unavailable(a.id) ? "bad" : ""}`}
-                  onClick={() => {
-                    setScError("");
-                    setRecording(recording === a.id ? null : a.id);
-                  }}
-                >
-                  {recording === a.id ? "Press keys…" : pretty(info.shortcuts[a.id])}
-                </button>
+          {GROUPS.map((g) => (
+            <div key={g.scope}>
+              <h3 className="sc-group">{g.title}</h3>
+              <div className="sc-list">
+                {ACTIONS.filter((a) => a.scope === g.scope).map((a) => (
+                  <div key={a.id} className="sc-row">
+                    <span className="sc-label">
+                      {a.label}
+                      {unavailable(a.id) && recording !== a.id && (
+                        <span className="sc-warn">in use by another app — pick another</span>
+                      )}
+                    </span>
+                    <button
+                      className={`sc-key ${recording === a.id ? "rec" : ""} ${unavailable(a.id) ? "bad" : ""}`}
+                      onClick={() => {
+                        setScError("");
+                        setRecording(recording === a.id ? null : a.id);
+                      }}
+                    >
+                      {recording === a.id ? "Press keys…" : pretty(info.shortcuts[a.id])}
+                    </button>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            </div>
+          ))}
           {scError && <p className="sc-error">{scError}</p>}
           <p className="hint">
-            In quick capture: <kbd>Enter</kbd> save · <kbd>Shift Enter</kbd> notes · <kbd>Ctrl Shift Enter</kbd> save
-            &amp; open · <kbd>Ctrl O</kbd> open app · <kbd>Esc</kbd> hide
+            In quick capture, a plain Enter or Shift Enter shortcut doesn’t fire inside the notes box (it adds a
+            line there) — use <kbd>Ctrl Enter</kbd> to save from the notes.
           </p>
         </div>
 

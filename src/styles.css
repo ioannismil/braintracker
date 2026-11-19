@@ -265,6 +265,8 @@ kbd {
 .capture-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 11.5px; color: var(--ink-3); }
 .capture-foot kbd { font-size: 10px; padding: 0 4px; }
 .capture-foot .bad { color: var(--danger); }
+.capture-foot .good { color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.capture-actions { display: flex; gap: 6px; flex-shrink: 0; }
 .primary.small { margin: 0; padding: 6px 16px; }
 .primary:disabled { opacity: 0.45; cursor: default; filter: none; }
 
@@ -275,6 +277,7 @@ kbd {
 .sc-list { margin-top: 10px; display: grid; gap: 4px; }
 .sc-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 3px 0; }
 .sc-label { font-size: 13px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sc-group { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-3); margin: 14px 0 0; }
 .badge { font-size: 10.5px; color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 0 8px; }
 .sc-warn { font-size: 11.5px; color: var(--danger); }
 .sc-key {
