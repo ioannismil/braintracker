@@ -9,6 +9,7 @@ import History from "./History";
 import Snippet from "./Snippet";
 import type { UpdateInfo } from "./api";
 import { imageFiles, imageNames, insertImages, IMG_BASE } from "./images";
+import { mergeNote, type Version } from "./merge";
 import { handleMarkdownClick, isInsideCopyButton, renderMarkdown } from "./markdown";
 import {
   DEFAULT_SHORTCUTS,
@@ -27,10 +28,15 @@ type Draft = {
   tagsText: string;
   pinned: boolean;
   createdAt: number;
+  /** The saved version this draft is based on (to notice changes made elsewhere, e.g. `bt`). */
   updatedAt: number;
+  /** The note as last loaded or saved, for merging with changes made elsewhere. */
+  base: Version;
   dirty: boolean;
 };
-type SaveState = "idle" | "saving" | "saved" | "error";
+type SaveState = "idle" | "saving" | "saved" | "error" | "merged" | "conflict";
+
+const versionOf = (e: Entry): Version => ({ title: e.title, body: e.body, tags: e.tags });
 
 const toDraft = (e: Entry): Draft => ({
   id: e.id,
@@ -40,6 +46,7 @@ const toDraft = (e: Entry): Draft => ({
   pinned: e.pinned,
   createdAt: e.createdAt,
   updatedAt: e.updatedAt,
+  base: versionOf(e),
   dirty: false,
 });
 
@@ -52,6 +59,12 @@ export default function App() {
   const [tags, setTags] = useState<TagCount[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
+  /** Saved elsewhere while you edited, in a way that can't be combined with your edit. */
+  const [conflict, setConflict] = useState<Entry | null>(null);
+  const conflictRef = useRef<Entry | null>(null);
+  conflictRef.current = conflict;
+  /** A save is on its way (its text is no longer marked dirty, but isn't stored yet). */
+  const savingRef = useRef(false);
   const [preview, setPreview] = useState(false);
   /** Which Settings tab is showing, or null when Settings is closed. */
   const [settingsTab, setSettingsTab] = useState<SettingsTab | null>(null);
@@ -130,21 +143,117 @@ export default function App() {
       saveTimer.current = undefined;
     }
     const d = draftRef.current;
-    if (!d || !d.dirty) return;
+    if (!d || !d.dirty || conflictRef.current) return; // a conflict waits for your choice
     d.dirty = false;
+    savingRef.current = true;
     setSaveState("saving");
+    const tags = parseTags(d.tagsText);
     try {
-      const saved = await api.updateEntry(d.id, d.title, d.body, parseTags(d.tagsText));
+      // Only saved if nobody else (bt) changed the note since this window loaded it.
+      const res = await api.updateEntry(d.id, d.title, d.body, tags, d.updatedAt);
       const cur = draftRef.current;
-      if (saved && cur && cur.id === saved.id) setCurrent({ ...cur, updatedAt: saved.updatedAt });
-      setSaveState("saved");
+      if (res.status === "saved") {
+        if (cur && cur.id === d.id)
+          setCurrent({ ...cur, updatedAt: res.entry.updatedAt, base: { title: d.title, body: d.body, tags } });
+        setSaveState("saved");
+      } else if (res.status === "conflict") {
+        if (cur && cur.id === d.id) resolveRef.current({ ...cur, dirty: true }, res.entry);
+      } else if (cur && cur.id === d.id) {
+        setCurrent(null); // deleted for good elsewhere
+      }
     } catch (e) {
       console.error(e);
       d.dirty = true;
       setSaveState("error");
+    } finally {
+      savingRef.current = false;
     }
     refresh();
   }, [refresh]);
+
+  /**
+   * The note was saved elsewhere (bt) while you were editing it here. Combine both changes
+   * when that's safe (e.g. bt appended text); otherwise ask which version to keep.
+   */
+  const resolveConflict = (cur: Draft, theirs: Entry) => {
+    if (theirs.trashed) {
+      setCurrent(null);
+      setUndo({ id: theirs.id, title: theirs.title.trim() || "Untitled" });
+      return;
+    }
+    const mine: Version = { title: cur.title, body: cur.body, tags: parseTags(cur.tagsText) };
+    const merged = mergeNote(cur.base, mine, versionOf(theirs));
+    const rebased = { ...cur, pinned: theirs.pinned, updatedAt: theirs.updatedAt, base: versionOf(theirs) };
+    if (!merged) {
+      setCurrent({ ...cur, dirty: true });
+      setConflict(theirs);
+      setSaveState("conflict");
+      return;
+    }
+    setCurrent({ ...rebased, title: merged.title, body: merged.body, tagsText: merged.tags.join(", "), dirty: true });
+    setSaveState("merged");
+    if (saveTimer.current) window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(flush, 0);
+  };
+  const resolveRef = useRef(resolveConflict);
+  resolveRef.current = resolveConflict;
+
+  /** Conflict: keep what's in this window (the other version stays in History). */
+  const keepMine = async () => {
+    const cur = draftRef.current;
+    const theirs = conflictRef.current;
+    if (!cur || !theirs) return;
+    setConflict(null);
+    const res = await api.updateEntry(cur.id, cur.title, cur.body, parseTags(cur.tagsText), theirs.updatedAt, true);
+    if (res.status === "saved") {
+      setCurrent({ ...draftRef.current!, updatedAt: res.entry.updatedAt, base: versionOf(res.entry), dirty: false });
+      setSaveState("saved");
+    } else if (res.status === "conflict") {
+      resolveConflict(draftRef.current!, res.entry); // changed yet again
+    }
+    refresh();
+  };
+
+  const keepMineRef = useRef(keepMine);
+  keepMineRef.current = keepMine;
+
+  /** Conflict: take the version saved elsewhere (this window's text stays in History). */
+  const takeTheirs = async () => {
+    const cur = draftRef.current;
+    const theirs = conflictRef.current;
+    if (!cur || !theirs) return;
+    setConflict(null);
+    const tags = parseTags(cur.tagsText);
+    // Store mine (theirs goes to History), then put theirs back (mine goes to History).
+    const mine = await api.updateEntry(cur.id, cur.title, cur.body, tags, theirs.updatedAt, true);
+    if (mine.status !== "saved") return mine.status === "conflict" ? resolveConflict(cur, mine.entry) : undefined;
+    const back = await api.updateEntry(cur.id, theirs.title, theirs.body, theirs.tags, mine.entry.updatedAt, true);
+    if (back.status === "saved") setCurrent(toDraft(back.entry));
+    setSaveState("saved");
+    refresh();
+  };
+
+  /** Another program (bt) changed the notes: reload the list and, if it changed, the open note. */
+  const syncWithOutside = useCallback(async () => {
+    refresh();
+    const d = draftRef.current;
+    if (!d) return;
+    const e = await api.getEntry(d.id).catch(() => null);
+    const cur = draftRef.current;
+    if (!cur || cur.id !== d.id) return;
+    if (!e) return setCurrent(null);
+    if (e.trashed) return resolveRef.current(cur, e);
+    if (e.updatedAt === cur.updatedAt) {
+      if (e.pinned !== cur.pinned) setCurrent({ ...cur, pinned: e.pinned });
+      return;
+    }
+    if (cur.dirty || savingRef.current || conflictRef.current) {
+      // Unsaved edits here: the next save notices the change and merges (sooner if idle).
+      if (cur.dirty && !savingRef.current && !conflictRef.current) flush();
+      return;
+    }
+    setCurrent({ ...toDraft(e) });
+  }, [refresh, flush]);
 
   const edit = (patch: Partial<Draft>) => {
     const cur = draftRef.current;
@@ -157,6 +266,8 @@ export default function App() {
 
   /** Save the open entry; throw away entries that were created but never filled in. */
   const leaveCurrent = async () => {
+    // Leaving with an unanswered conflict: keep this window's text (the other is in History).
+    if (conflictRef.current) await keepMineRef.current();
     await flush();
     const d = draftRef.current;
     if (d && isBlank(d)) await api.discardEntry(d.id);
@@ -287,6 +398,8 @@ export default function App() {
       listen("summoned", () => focusSearch()),
       // Something was saved from the quick-capture popup
       listen("entries-changed", () => refresh()),
+      // Notes changed by another program (the `bt` command line)
+      listen("outside-change", () => syncWithOutside()),
       listen<number>("open-entry", (e) => openRef.current(e.payload, true)),
       // `bt show <id> --open`
       listen("pending-open", () => openPending()),
@@ -306,7 +419,7 @@ export default function App() {
       unlisteners.forEach((u) => u.then((f) => f()));
       window.clearInterval(clock);
     };
-  }, [flush, refresh]);
+  }, [flush, refresh, syncWithOutside]);
 
   // ---------- search box keys ----------
 
@@ -392,7 +505,17 @@ export default function App() {
   };
 
   const status =
-    saveState === "saving" ? "Saving…" : saveState === "error" ? "Couldn’t save — retrying on next edit" : draft?.dirty ? "Editing" : "Saved";
+    saveState === "saving"
+      ? "Saving…"
+      : saveState === "error"
+        ? "Couldn’t save — retrying on next edit"
+        : saveState === "conflict"
+          ? "Changed elsewhere — not saved"
+          : saveState === "merged"
+            ? "Merged with a change from outside this window"
+            : draft?.dirty
+              ? "Editing"
+              : "Saved";
 
   // ---------- render ----------
 
@@ -530,7 +653,7 @@ export default function App() {
         {draft ? (
           <>
             <div className="toolbar">
-              <span className={`status ${saveState === "error" ? "bad" : ""}`}>{status}</span>
+              <span className={`status ${saveState === "error" || saveState === "conflict" ? "bad" : ""}`}>{status}</span>
               <div className="spacer" />
               <button className={`tool ${draft.pinned ? "on" : ""}`} onClick={togglePin} title="Pin to top">
                 {draft.pinned ? "★ Pinned" : "☆ Pin"}
@@ -548,6 +671,23 @@ export default function App() {
                 🗑
               </button>
             </div>
+
+            {conflict && (
+              <div className="conflict" role="alert">
+                <span>
+                  This note was changed outside this window (for example with <code>bt</code>) while you were editing,
+                  and the two changes can’t be combined. Keep which one? The other stays in ↺ History.
+                </span>
+                <span className="conflict-actions">
+                  <button className="primary small" onClick={keepMine}>
+                    Keep mine
+                  </button>
+                  <button className="tool" onClick={takeTheirs}>
+                    Use the other version
+                  </button>
+                </span>
+              </div>
+            )}
 
             <div className="sheet">
               <input

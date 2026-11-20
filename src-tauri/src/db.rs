@@ -1,6 +1,6 @@
 //! SQLite storage: entries with FTS5 full-text search, search filters, trash and edit history.
 
-use rusqlite::{params, params_from_iter, types::Value, Connection, OptionalExtension, Row};
+use rusqlite::{params, params_from_iter, types::Value, Connection, OptionalExtension, Row, Transaction, TransactionBehavior};
 use serde::Serialize;
 use std::collections::HashSet;
 use std::path::Path;
@@ -102,6 +102,19 @@ pub struct Entry {
     pub pinned: bool,
     pub created_at: i64,
     pub updated_at: i64,
+    /// In the trash (e.g. deleted with `bt delete` while it was open in a window).
+    pub trashed: bool,
+}
+
+/// The result of a save that checks nobody else changed the entry meanwhile.
+#[derive(Serialize)]
+#[serde(tag = "status", content = "entry", rename_all = "camelCase")]
+pub enum Save {
+    Saved(Entry),
+    /// Changed elsewhere (e.g. `bt edit`) since the window loaded it: nothing was written,
+    /// and this is the entry as it is now.
+    Conflict(Entry),
+    Missing,
 }
 
 #[derive(Serialize)]
@@ -289,6 +302,7 @@ fn row_to_entry(r: &Row) -> rusqlite::Result<Entry> {
         pinned: r.get::<_, i64>(4)? != 0,
         created_at: r.get(5)?,
         updated_at: r.get(6)?,
+        trashed: false,
     })
 }
 
@@ -463,9 +477,10 @@ fn search(conn: &Connection, query: Option<&str>, tag: Option<&str>, any: bool) 
 
 pub fn get_entry(conn: &Connection, id: i64) -> rusqlite::Result<Option<Entry>> {
     conn.query_row(
-        "SELECT id, title, body, tags, pinned, created_at, updated_at FROM entries WHERE id = ?1",
+        "SELECT id, title, body, tags, pinned, created_at, updated_at, deleted_at IS NOT NULL
+         FROM entries WHERE id = ?1",
         params![id],
-        row_to_entry,
+        |r| Ok(Entry { trashed: r.get(7)?, ..row_to_entry(r)? }),
     )
     .optional()
 }
@@ -517,6 +532,8 @@ pub fn local_to_ms(conn: &Connection, local: &str) -> Option<i64> {
     .flatten()
 }
 
+/// An unconditional save (tests only; the app and `bt` use save_entry's check).
+#[cfg(test)]
 pub fn update_entry(
     conn: &Connection,
     id: i64,
@@ -524,30 +541,65 @@ pub fn update_entry(
     body: &str,
     tags: &[String],
 ) -> rusqlite::Result<Option<Entry>> {
-    let new_tags = encode_tags(tags);
-    let old: Option<(String, String, String, i64)> = conn
-        .query_row(
-            "SELECT title, body, tags, updated_at FROM entries WHERE id = ?1",
-            params![id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-        )
-        .optional()?;
-    let Some((old_title, old_body, old_tags, old_updated)) = old else {
-        return Ok(None);
+    Ok(match save_entry(conn, id, title, body, tags, None, false)? {
+        Save::Saved(e) | Save::Conflict(e) => Some(e),
+        Save::Missing => None,
+    })
+}
+
+/// Saves an entry, but only if it hasn't changed since `expected_updated_at` (when given):
+/// another program (the `bt` command line) may have edited it meanwhile, and saving over
+/// that would lose its change. The check and the write happen in one transaction that other
+/// connections can't write in between. `keep_previous` always saves the current state in the
+/// edit history first, so the version being replaced can be brought back.
+pub fn save_entry(
+    conn: &Connection,
+    id: i64,
+    title: &str,
+    body: &str,
+    tags: &[String],
+    expected_updated_at: Option<i64>,
+    keep_previous: bool,
+) -> rusqlite::Result<Save> {
+    let tx = Transaction::new_unchecked(conn, TransactionBehavior::Immediate)?;
+    let result = save_in(&tx, id, title, body, tags, expected_updated_at, keep_previous)?;
+    tx.commit()?;
+    Ok(result)
+}
+
+fn save_in(
+    conn: &Connection,
+    id: i64,
+    title: &str,
+    body: &str,
+    tags: &[String],
+    expected_updated_at: Option<i64>,
+    keep_previous: bool,
+) -> rusqlite::Result<Save> {
+    let current = match get_entry(conn, id)? {
+        Some(e) => e,
+        None => return Ok(Save::Missing),
     };
+    if expected_updated_at.is_some_and(|t| t != current.updated_at) {
+        return Ok(Save::Conflict(current));
+    }
+    let new_tags = encode_tags(tags);
+    let (old_title, old_body, old_tags, old_updated) =
+        (current.title.clone(), current.body.clone(), encode_tags(&current.tags), current.updated_at);
     if old_title == title && old_body == body && old_tags == new_tags {
-        return get_entry(conn, id); // nothing changed — don't bump "edited"
+        return Ok(Save::Saved(current)); // nothing changed — don't bump "edited"
     }
 
     // Edit history: keep the state from before this burst of editing.
-    let now = now_ms();
+    // Always later than the last edit, so every change is told apart by its time.
+    let now = now_ms().max(old_updated + 1);
     let last_taken: Option<i64> = conn.query_row(
         "SELECT max(taken_at) FROM entry_versions WHERE entry_id = ?1",
         params![id],
         |r| r.get(0),
     )?;
     let blank = old_title.trim().is_empty() && old_body.trim().is_empty();
-    if !blank && last_taken.is_none_or(|t| now - t >= VERSION_GAP_MS) {
+    if !blank && (keep_previous || last_taken.is_none_or(|t| now - t >= VERSION_GAP_MS)) {
         snapshot(conn, id, &old_title, &old_body, &old_tags, old_updated, now)?;
     }
 
@@ -555,7 +607,13 @@ pub fn update_entry(
         "UPDATE entries SET title = ?2, body = ?3, tags = ?4, updated_at = ?5 WHERE id = ?1",
         params![id, title, body, new_tags, now],
     )?;
-    get_entry(conn, id)
+    Ok(get_entry(conn, id)?.map_or(Save::Missing, Save::Saved))
+}
+
+/// Changes on every commit by *another* connection to the database (e.g. `bt`), so the app
+/// can tell when to reload.
+pub fn data_version(conn: &Connection) -> rusqlite::Result<i64> {
+    conn.query_row("PRAGMA data_version", [], |r| r.get(0))
 }
 
 fn snapshot(
@@ -931,6 +989,49 @@ mod tests {
 
         purge_entry(&c, e.id).unwrap();
         assert!(list_versions(&c, e.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn saving_over_a_change_made_elsewhere_is_refused() {
+        let c = mem();
+        let e = create_entry(&c, "Note", "first", &[]).unwrap();
+        // Another program (bt) appends while the note is open in a window.
+        update_entry(&c, e.id, "Note", "first\n\nappended", &[]).unwrap();
+
+        // The window still thinks the note is as it loaded it: its save is refused.
+        let Save::Conflict(now) = save_entry(&c, e.id, "Note", "first, edited", &[], Some(e.updated_at), false).unwrap() else {
+            panic!("expected a conflict")
+        };
+        assert_eq!(now.body, "first\n\nappended");
+        assert_eq!(get_entry(&c, e.id).unwrap().unwrap().body, "first\n\nappended");
+
+        // Saving against the current version works, and keeps the one it replaces in history.
+        let Save::Saved(saved) =
+            save_entry(&c, e.id, "Note", "first, edited\n\nappended", &[], Some(now.updated_at), true).unwrap()
+        else {
+            panic!("expected a save")
+        };
+        assert!(saved.updated_at > now.updated_at);
+        assert!(list_versions(&c, e.id).unwrap().iter().any(|v| v.snippet.contains("appended")));
+
+        assert!(matches!(save_entry(&c, 999, "x", "", &[], None, false).unwrap(), Save::Missing));
+        trash_entry(&c, e.id).unwrap();
+        assert!(get_entry(&c, e.id).unwrap().unwrap().trashed);
+    }
+
+    #[test]
+    fn notices_writes_from_other_programs() {
+        let dir = std::env::temp_dir().join(format!("bt-dv-{}", now_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let app = open(&dir.join("x.db")).unwrap();
+        let before = data_version(&app).unwrap();
+        create_entry(&app, "own write", "", &[]).unwrap();
+        assert_eq!(data_version(&app).unwrap(), before, "its own writes don't count");
+        let cli = open(&dir.join("x.db")).unwrap();
+        create_entry(&cli, "from bt", "", &[]).unwrap();
+        assert_ne!(data_version(&app).unwrap(), before);
+        drop((app, cli));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

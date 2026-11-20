@@ -318,20 +318,35 @@ fn run(cmd: Cmd, json: bool) -> Result<(), String> {
             Ok(())
         }
         Cmd::Edit { id, title, body, append, tags } => {
-            let entry = live_entry(&conn, id)?;
-            let mut new_body = stdin_if_dash(body)?.unwrap_or(entry.body.clone());
-            if let Some(more) = stdin_if_dash(append)? {
-                new_body = if new_body.trim().is_empty() { more } else { format!("{}\n\n{more}", new_body.trim_end()) };
-            }
-            let updated = db::update_entry(
-                &conn,
-                id,
-                title.as_deref().unwrap_or(&entry.title),
-                &new_body,
-                tags.as_ref().unwrap_or(&entry.tags),
-            )
-            .map_err(e)?
-            .ok_or_else(|| not_found(id))?;
+            let body = stdin_if_dash(body)?;
+            let append = stdin_if_dash(append)?;
+            // The app may save the same note at the same moment: only write if the note is
+            // still as read, otherwise read it again (so neither side's change is lost).
+            let mut attempt = 0;
+            let updated = loop {
+                let entry = live_entry(&conn, id)?;
+                let mut new_body = body.clone().unwrap_or(entry.body.clone());
+                if let Some(more) = &append {
+                    new_body =
+                        if new_body.trim().is_empty() { more.clone() } else { format!("{}\n\n{more}", new_body.trim_end()) };
+                }
+                let saved = db::save_entry(
+                    &conn,
+                    id,
+                    title.as_deref().unwrap_or(&entry.title),
+                    &new_body,
+                    tags.as_ref().unwrap_or(&entry.tags),
+                    Some(entry.updated_at),
+                    false,
+                )
+                .map_err(e)?;
+                match saved {
+                    db::Save::Saved(entry) => break entry,
+                    db::Save::Missing => return Err(not_found(id)),
+                    db::Save::Conflict(_) if attempt < 5 => attempt += 1,
+                    db::Save::Conflict(_) => return Err(format!("#{id} keeps changing; try again")),
+                }
+            };
             if json {
                 out.json(&JsonEntry::from(&conn, &updated));
             } else {

@@ -368,7 +368,12 @@ fn create_entry(
     .map_err(err)
 }
 
+/// Saves an entry from the editor. `base_updated_at` is the version the window last loaded:
+/// if the entry changed since (e.g. `bt edit`), nothing is written and the current entry
+/// comes back as a conflict for the window to merge. `keep_previous` puts the version being
+/// replaced in the edit history whatever the timing.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 fn update_entry(
     app: AppHandle,
     db: State<Db>,
@@ -376,13 +381,34 @@ fn update_entry(
     title: String,
     body: String,
     tags: Vec<String>,
-) -> CmdResult<Option<Entry>> {
+    base_updated_at: Option<i64>,
+    keep_previous: Option<bool>,
+) -> CmdResult<db::Save> {
     let saved = {
         let conn = db.0.lock().map_err(err)?;
-        db::update_entry(&conn, id, &title, &body, &tags).map_err(err)?
+        db::save_entry(&conn, id, &title, &body, &tags, base_updated_at, keep_previous.unwrap_or(false)).map_err(err)?
     };
-    let _ = app.emit("entry-updated", id); // popped-out copies refresh
+    if matches!(saved, db::Save::Saved(_)) {
+        let _ = app.emit("entry-updated", id); // popped-out copies refresh
+    }
     Ok(saved)
+}
+
+/// Tells every window when another program (the `bt` command line) changed the notes,
+/// so open notes and lists reload instead of showing — and later saving over — old text.
+fn watch_for_outside_changes(app: AppHandle) {
+    std::thread::spawn(move || {
+        let version = |app: &AppHandle| app.try_state::<Db>()?.0.lock().ok().and_then(|c| db::data_version(&c).ok());
+        let mut last = version(&app);
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(800));
+            let now = version(&app);
+            if now.is_some() && now != last {
+                last = now;
+                let _ = app.emit("outside-change", ());
+            }
+        }
+    });
 }
 
 #[tauri::command]
@@ -1137,6 +1163,9 @@ pub fn run() {
 
             // Reads the text in screenshots (in the background) so search finds it.
             ocr::start(app.handle());
+
+            // Notes changed from the `bt` command line show up in open windows.
+            watch_for_outside_changes(app.handle().clone());
 
             // Notes dropped into the inbox folder are imported automatically.
             inbox::start(app.handle().clone());

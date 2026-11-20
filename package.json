@@ -10,7 +10,7 @@
     "tauri": "tauri",
     "app:dev": "tauri dev",
     "app:build": "tauri build",
-    "test": "node --experimental-strip-types --no-warnings scripts/test-blanks.mjs"
+    "test": "node --experimental-strip-types --no-warnings scripts/test-blanks.mjs && node --experimental-strip-types --no-warnings scripts/test-merge.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.5",

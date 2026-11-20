@@ -28,7 +28,7 @@ tauri-plugin-updater = "2.14.1"
 
 [target.'cfg(windows)'.dependencies]
 arboard = "3"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_DataExchange", "Win32_UI_Input_KeyboardAndMouse"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_UI_Input_KeyboardAndMouse"] }
 # Windows' built-in OCR (reads the text in screenshots for search)
 windows = { version = "0.62", features = ["Foundation", "Foundation_Collections", "Graphics_Imaging", "Media_Ocr", "Storage", "Storage_Streams", "Win32_System_WinRT"] }
 

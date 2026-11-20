@@ -33,6 +33,7 @@ export default function Note() {
     const un = [
       listen<number>("entry-updated", (e) => e.payload === id && load()),
       listen("entries-changed", () => load()),
+      listen("outside-change", () => load()), // edited with `bt`
       listen("data-restored", () => load()),
     ];
     // Edited from the `bt` command line meanwhile? Catch up when you come back to it.

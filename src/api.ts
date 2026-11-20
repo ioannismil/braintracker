@@ -8,7 +8,15 @@ export interface Entry {
   pinned: boolean;
   createdAt: number;
   updatedAt: number;
+  /** In the trash (e.g. deleted with `bt delete` while it was open). */
+  trashed: boolean;
 }
+
+export type SaveResult =
+  | { status: "saved"; entry: Entry }
+  /** Changed elsewhere since it was loaded: nothing was written; this is the note now. */
+  | { status: "conflict"; entry: Entry }
+  | { status: "missing" };
 
 export interface EntrySummary {
   id: number;
@@ -179,8 +187,19 @@ export const api = {
   popOut: (id: number) => invoke<void>("pop_out", { id }),
   /** From a popped-out note: edit it in the main window. */
   openInMain: (id: number) => invoke<void>("open_in_main", { id }),
-  updateEntry: (id: number, title: string, body: string, tags: string[]) =>
-    invoke<Entry | null>("update_entry", { id, title, body, tags }),
+  /**
+   * Saves, but only if the note is still the version `baseUpdatedAt` (when given); otherwise
+   * returns the current note as a conflict. `keepPrevious` puts the replaced version in History.
+   */
+  updateEntry: (
+    id: number,
+    title: string,
+    body: string,
+    tags: string[],
+    baseUpdatedAt?: number,
+    keepPrevious = false,
+  ) =>
+    invoke<SaveResult>("update_entry", { id, title, body, tags, baseUpdatedAt: baseUpdatedAt ?? null, keepPrevious }),
   setPinned: (id: number, pinned: boolean) => invoke<void>("set_pinned", { id, pinned }),
   /** Moves to the trash. */
   deleteEntry: (id: number) => invoke<void>("delete_entry", { id }),
