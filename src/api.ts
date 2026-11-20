@@ -129,6 +129,8 @@ export const api = {
   captureSaved: () => invoke<void>("capture_saved"),
   captureDone: (openId: number | null, openMain = false) =>
     invoke<void>("capture_done", { openId, openMain }),
+  hideSpotlight: () => invoke<void>("hide_spotlight"),
+  spotlightOpen: (openId: number | null) => invoke<void>("spotlight_open", { openId }),
   updateEntry: (id: number, title: string, body: string, tags: string[]) =>
     invoke<Entry | null>("update_entry", { id, title, body, tags }),
   setPinned: (id: number, pinned: boolean) => invoke<void>("set_pinned", { id, pinned }),

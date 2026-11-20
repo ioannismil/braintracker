@@ -1,6 +1,7 @@
 mod backup;
 mod db;
 mod import;
+mod selection;
 mod updates;
 
 use db::{Db, Entry, EntrySummary, TagCount};
@@ -20,6 +21,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 const MAIN: &str = "main";
 const CAPTURE: &str = "capture";
+const SPOTLIGHT: &str = "spotlight";
 
 type CmdResult<T> = Result<T, String>;
 
@@ -29,14 +31,16 @@ fn err<E: std::fmt::Display>(e: E) -> String {
 
 // ---------- shortcuts ----------
 
-/// Every configurable shortcut, stored as "Ctrl+Shift+E"-style strings.
-/// `show_main` and `capture` are system-wide; `capture_*` only work in the quick-capture
+/// Every configurable shortcut, stored as "Ctrl+Shift+E"-style strings ("" = not set).
+/// The `Global` ones work system-wide; `capture_*` only work in the quick-capture
 /// popup; the rest only work in the main window.
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 struct Shortcuts {
     show_main: String,
     capture: String,
+    capture_selection: String,
+    spotlight: String,
     new_entry: String,
     search: String,
     preview: String,
@@ -53,6 +57,8 @@ impl Default for Shortcuts {
         Self {
             show_main: "Ctrl+Shift+Space".into(),
             capture: "Ctrl+Shift+E".into(),
+            capture_selection: "Ctrl+Shift+D".into(),
+            spotlight: "Ctrl+Alt+Space".into(),
             new_entry: "Ctrl+T".into(),
             search: "Ctrl+K".into(),
             preview: "Ctrl+E".into(),
@@ -66,11 +72,76 @@ impl Default for Shortcuts {
     }
 }
 
+/// Loads the saved shortcuts on top of the defaults.
+///
+/// Whatever the user saved always wins, so updating the app never resets their choices,
+/// even if the saved settings are partly unreadable (each shortcut is read on its own).
+/// A shortcut that's new in this version gets its default only if the user hasn't already
+/// put that key combo on something else — otherwise it starts unset, for them to pick.
+fn load_shortcuts(saved: Option<&str>) -> Shortcuts {
+    use serde_json::Value;
+    let defaults = Shortcuts::default();
+    let Some(saved) = saved.and_then(|s| serde_json::from_str::<serde_json::Map<String, Value>>(s).ok()) else {
+        return defaults;
+    };
+    let Ok(Value::Object(mut merged)) = serde_json::to_value(&defaults) else {
+        return defaults;
+    };
+    let used: std::collections::HashSet<&str> = saved
+        .iter()
+        .filter(|(k, _)| merged.contains_key(k.as_str()))
+        .filter_map(|(_, v)| v.as_str())
+        .collect();
+    for (key, value) in merged.iter_mut() {
+        match saved.get(key).and_then(Value::as_str) {
+            Some(mine) => *value = Value::String(mine.to_string()),
+            None => {
+                if value.as_str().is_some_and(|d| used.contains(d)) {
+                    *value = Value::String(String::new());
+                }
+            }
+        }
+    }
+    serde_json::from_value(Value::Object(merged)).unwrap_or(defaults)
+}
+
+/// The system-wide shortcuts.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Global {
+    ShowMain,
+    Capture,
+    CaptureSelection,
+    Spotlight,
+}
+
+impl Global {
+    const ALL: [Global; 4] = [Global::ShowMain, Global::Capture, Global::CaptureSelection, Global::Spotlight];
+
+    /// Matches the field name the UI uses.
+    fn id(self) -> &'static str {
+        match self {
+            Global::ShowMain => "showMain",
+            Global::Capture => "capture",
+            Global::CaptureSelection => "captureSelection",
+            Global::Spotlight => "spotlight",
+        }
+    }
+
+    fn combo(self, s: &Shortcuts) -> &str {
+        match self {
+            Global::ShowMain => &s.show_main,
+            Global::Capture => &s.capture,
+            Global::CaptureSelection => &s.capture_selection,
+            Global::Spotlight => &s.spotlight,
+        }
+    }
+}
+
 #[derive(Default)]
 struct Hotkeys {
     config: Shortcuts,
-    main: Option<Shortcut>,
-    capture: Option<Shortcut>,
+    /// The system-wide shortcuts that are currently registered with Windows.
+    registered: Vec<(Global, Shortcut)>,
 }
 
 struct HotkeyState(Mutex<Hotkeys>);
@@ -79,15 +150,14 @@ struct HotkeyState(Mutex<Hotkeys>);
 #[serde(rename_all = "camelCase")]
 struct ShortcutsInfo {
     shortcuts: Shortcuts,
-    main_registered: bool,
-    capture_registered: bool,
+    /// Ids of the system-wide shortcuts that are working (one is missing if another app owns its keys).
+    registered: Vec<&'static str>,
 }
 
 fn info_of(h: &Hotkeys) -> ShortcutsInfo {
     ShortcutsInfo {
         shortcuts: h.config.clone(),
-        main_registered: h.main.is_some(),
-        capture_registered: h.capture.is_some(),
+        registered: h.registered.iter().map(|(g, _)| g.id()).collect(),
     }
 }
 
@@ -99,24 +169,26 @@ fn parse_global(combo: &str) -> Result<Shortcut, String> {
 
 fn unregister_globals(app: &AppHandle, h: &mut Hotkeys) {
     let gs = app.global_shortcut();
-    if let Some(s) = h.main.take() {
-        let _ = gs.unregister(s);
-    }
-    if let Some(s) = h.capture.take() {
+    for (_, s) in h.registered.drain(..) {
         let _ = gs.unregister(s);
     }
 }
 
-/// (Re)registers both system-wide shortcuts. One may fail if another app already owns it.
+/// (Re)registers the system-wide shortcuts. One may fail if another app already owns it.
 fn register_globals(app: &AppHandle, h: &mut Hotkeys) {
     unregister_globals(app, h);
     let gs = app.global_shortcut();
-    h.main = parse_global(&h.config.show_main)
-        .ok()
-        .filter(|s| gs.register(*s).is_ok());
-    h.capture = parse_global(&h.config.capture)
-        .ok()
-        .filter(|s| gs.register(*s).is_ok());
+    for g in Global::ALL {
+        let combo = g.combo(&h.config);
+        if combo.is_empty() {
+            continue;
+        }
+        if let Ok(s) = parse_global(combo) {
+            if gs.register(s).is_ok() {
+                h.registered.push((g, s));
+            }
+        }
+    }
 }
 
 #[tauri::command]
@@ -132,10 +204,17 @@ fn set_shortcuts(
     hk: State<HotkeyState>,
     shortcuts: Shortcuts,
 ) -> CmdResult<ShortcutsInfo> {
-    let main = parse_global(&shortcuts.show_main)?;
-    let capture = parse_global(&shortcuts.capture)?;
-    if main == capture {
-        return Err("The two system-wide shortcuts must be different".into());
+    let mut seen = Vec::new();
+    for g in Global::ALL {
+        let combo = g.combo(&shortcuts);
+        if combo.is_empty() {
+            continue;
+        }
+        let s = parse_global(combo)?;
+        if seen.contains(&s) {
+            return Err("The system-wide shortcuts must all be different".into());
+        }
+        seen.push(s);
     }
     {
         let conn = db.0.lock().map_err(err)?;
@@ -451,6 +530,23 @@ fn capture_done(app: AppHandle, open_id: Option<i64>, open_main: bool) {
     }
 }
 
+#[tauri::command]
+fn hide_spotlight(app: AppHandle) {
+    if let Some(w) = app.get_webview_window(SPOTLIGHT) {
+        let _ = w.hide();
+    }
+}
+
+/// Called by quick search to jump to an entry (or just the app) in the main window.
+#[tauri::command]
+fn spotlight_open(app: AppHandle, open_id: Option<i64>) {
+    hide_spotlight(app.clone());
+    show_main(&app);
+    if let Some(id) = open_id {
+        let _ = app.emit_to(MAIN, "open-entry", id);
+    }
+}
+
 // ---------- app / settings commands ----------
 
 // ---------- updates ----------
@@ -608,17 +704,56 @@ fn toggle_main(app: &AppHandle) {
     }
 }
 
-fn toggle_capture(app: &AppHandle) {
+/// Shows the quick-capture popup; `selection` is text to add to the end of its notes.
+fn show_capture(app: &AppHandle, selection: Option<String>) {
     if let Some(w) = app.get_webview_window(CAPTURE) {
-        if w.is_visible().unwrap_or(false) {
-            let _ = w.hide();
-        } else {
+        if !w.is_visible().unwrap_or(false) {
             let _ = w.center();
-            let _ = w.show();
-            let _ = w.set_focus();
-            let _ = app.emit_to(CAPTURE, "capture-shown", ());
         }
+        let _ = w.show();
+        let _ = w.set_focus();
+        let _ = app.emit_to(CAPTURE, "capture-shown", selection);
     }
+}
+
+fn toggle_capture(app: &AppHandle) {
+    match app.get_webview_window(CAPTURE) {
+        Some(w) if w.is_visible().unwrap_or(false) => {
+            let _ = w.hide();
+        }
+        _ => show_capture(app, None),
+    }
+}
+
+/// Copies the text selected in the app in front, then opens quick capture with it in the notes.
+/// Runs on its own thread: it waits for the shortcut's keys to be released and for the copy.
+fn capture_selection(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let text = selection::copy_selection();
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || show_capture(&handle, text));
+    });
+}
+
+/// Shows quick search centred horizontally, a little above the middle of the screen
+/// (like Spotlight), so the bar stays put while the results grow below it.
+fn toggle_spotlight(app: &AppHandle) {
+    let Some(w) = app.get_webview_window(SPOTLIGHT) else { return };
+    if w.is_visible().unwrap_or(false) {
+        let _ = w.hide();
+        return;
+    }
+    let _ = w.center();
+    if let (Ok(Some(m)), Ok(size)) = (w.current_monitor(), w.outer_size()) {
+        let (mp, ms) = (m.position(), m.size());
+        let x = mp.x + (ms.width as i32 - size.width as i32) / 2;
+        let y = mp.y + (ms.height as f64 * 0.2) as i32;
+        let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
+    }
+    let _ = w.show();
+    let _ = w.set_focus();
+    let _ = app.emit_to(SPOTLIGHT, "spotlight-shown", ());
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -649,14 +784,16 @@ pub fn run() {
                         return;
                     }
                     let Some(hk) = app.try_state::<HotkeyState>() else { return };
-                    let (is_main, is_capture) = match hk.0.lock() {
-                        Ok(h) => (h.main.as_ref() == Some(shortcut), h.capture.as_ref() == Some(shortcut)),
+                    let hit = match hk.0.lock() {
+                        Ok(h) => h.registered.iter().find(|(_, s)| s == shortcut).map(|(g, _)| *g),
                         Err(_) => return,
                     };
-                    if is_main {
-                        toggle_main(app);
-                    } else if is_capture {
-                        toggle_capture(app);
+                    match hit {
+                        Some(Global::ShowMain) => toggle_main(app),
+                        Some(Global::Capture) => toggle_capture(app),
+                        Some(Global::CaptureSelection) => capture_selection(app),
+                        Some(Global::Spotlight) => toggle_spotlight(app),
+                        None => {}
                     }
                 })
                 .build(),
@@ -701,9 +838,7 @@ pub fn run() {
                 let _ = app.autolaunch().enable();
                 db::set_setting(&conn, "autostart_initialized", "1")?;
             }
-            let config: Shortcuts = db::get_setting(&conn, "shortcuts")?
-                .and_then(|s| serde_json::from_str(&s).ok())
-                .unwrap_or_default();
+            let config = load_shortcuts(db::get_setting(&conn, "shortcuts")?.as_deref());
             // Entries trashed more than 30 days ago are deleted for good.
             let _ = db::purge_expired_trash(&conn);
             app.manage(Db(Mutex::new(conn)));
@@ -723,9 +858,10 @@ pub fn run() {
 
             // System tray
             let capture_i = MenuItem::with_id(app, "capture", "Quick capture", true, None::<&str>)?;
+            let search_i = MenuItem::with_id(app, "search", "Quick search", true, None::<&str>)?;
             let open_i = MenuItem::with_id(app, "open", "Open BrainTracker", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&capture_i, &open_i, &quit_i])?;
+            let menu = Menu::with_items(app, &[&capture_i, &search_i, &open_i, &quit_i])?;
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().cloned().expect("app icon"))
                 .tooltip("BrainTracker")
@@ -733,6 +869,7 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "capture" => toggle_capture(app),
+                    "search" => toggle_spotlight(app),
                     "open" => show_main(app),
                     "quit" => app.exit(0),
                     _ => {}
@@ -761,8 +898,8 @@ pub fn run() {
                 api.prevent_close();
                 let _ = window.hide();
             }
-            // The capture popup disappears when you click away (your text is kept).
-            WindowEvent::Focused(false) if window.label() == CAPTURE => {
+            // The popups disappear when you click away (your text is kept).
+            WindowEvent::Focused(false) if window.label() == CAPTURE || window.label() == SPOTLIGHT => {
                 let _ = window.hide();
             }
             _ => {}
@@ -791,6 +928,8 @@ pub fn run() {
             hide_capture,
             capture_done,
             capture_saved,
+            hide_spotlight,
+            spotlight_open,
             get_shortcuts,
             set_shortcuts,
             suspend_shortcuts,
@@ -816,9 +955,49 @@ mod tests {
 
     #[test]
     fn shortcut_formats_parse() {
-        for ok in ["Ctrl+Shift+Space", "Ctrl+Shift+E", "Ctrl+Alt+B", "Super+Shift+1", "Ctrl+F5", "Ctrl+Shift+,", "Alt+Shift+/", "Ctrl+Shift+["] {
+        for ok in ["Ctrl+Shift+Space", "Ctrl+Shift+E", "Ctrl+Alt+Space", "Ctrl+Alt+B", "Super+Shift+1", "Ctrl+F5", "Ctrl+Shift+,", "Alt+Shift+/", "Ctrl+Shift+["] {
             assert!(parse_global(ok).is_ok(), "{ok} should parse");
         }
         assert_ne!(parse_global("Ctrl+Shift+Space").unwrap(), parse_global("Ctrl+Shift+E").unwrap());
+        let d = Shortcuts::default();
+        for g in Global::ALL {
+            assert!(parse_global(g.combo(&d)).is_ok(), "default for {} should parse", g.id());
+        }
+    }
+
+    #[test]
+    fn never_saved_uses_defaults() {
+        assert_eq!(load_shortcuts(None), Shortcuts::default());
+        assert_eq!(load_shortcuts(Some("not json")), Shortcuts::default());
+    }
+
+    #[test]
+    fn saved_shortcuts_survive_updates() {
+        // Saved by an older version: no quick search / capture selection yet, and one customised key.
+        let old = r#"{"showMain":"Ctrl+Alt+B","capture":"Ctrl+Shift+E","newEntry":"Ctrl+N","search":"Ctrl+K",
+            "preview":"Ctrl+E","settings":"Ctrl+,","captureSave":"Enter","captureSaveClose":"Ctrl+Shift+Enter",
+            "captureNotes":"Shift+Enter","captureOpenApp":"Ctrl+O","captureHide":"Escape"}"#;
+        let s = load_shortcuts(Some(old));
+        assert_eq!(s.show_main, "Ctrl+Alt+B");
+        assert_eq!(s.new_entry, "Ctrl+N");
+        // New shortcuts get their defaults.
+        assert_eq!(s.spotlight, "Ctrl+Alt+Space");
+        assert_eq!(s.capture_selection, "Ctrl+Shift+D");
+    }
+
+    #[test]
+    fn new_shortcut_never_steals_a_combo_the_user_picked() {
+        let s = load_shortcuts(Some(r#"{"showMain":"Ctrl+Alt+Space","newEntry":"Ctrl+Shift+D"}"#));
+        assert_eq!(s.show_main, "Ctrl+Alt+Space");
+        assert_eq!(s.spotlight, "", "quick search starts unset rather than clashing");
+        assert_eq!(s.capture_selection, "");
+        assert_eq!(s.capture, "Ctrl+Shift+E");
+    }
+
+    #[test]
+    fn one_bad_value_keeps_the_rest() {
+        let s = load_shortcuts(Some(r#"{"showMain":"Ctrl+Alt+B","capture":42}"#));
+        assert_eq!(s.show_main, "Ctrl+Alt+B");
+        assert_eq!(s.capture, "Ctrl+Shift+E");
     }
 }

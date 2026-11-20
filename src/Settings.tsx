@@ -30,9 +30,18 @@ interface Props {
   onClose: () => void;
   onUpdateFound: (u: UpdateInfo) => void;
   beforeInstall: () => Promise<void>;
+  initialTab?: SettingsTab;
 }
 
-export default function Settings({ info, onChange, onClose, onUpdateFound, beforeInstall }: Props) {
+export type SettingsTab = "general" | "shortcuts";
+
+const TABS: { id: SettingsTab; label: string }[] = [
+  { id: "general", label: "General" },
+  { id: "shortcuts", label: "Keyboard shortcuts" },
+];
+
+export default function Settings({ info, onChange, onClose, onUpdateFound, beforeInstall, initialTab = "general" }: Props) {
+  const [tab, setTab] = useState<SettingsTab>(initialTab);
   const [checking, setChecking] = useState(false);
   const [found, setFound] = useState<UpdateInfo | null>(null);
   const [updateMsg, setUpdateMsg] = useState("");
@@ -142,7 +151,7 @@ export default function Settings({ info, onChange, onClose, onUpdateFound, befor
 
   const isDefault = ACTIONS.every((a) => info.shortcuts[a.id] === DEFAULT_SHORTCUTS[a.id]);
   const unavailable = (id: ShortcutAction) =>
-    (id === "showMain" && !info.mainRegistered) || (id === "capture" && !info.captureRegistered);
+    ACTIONS.find((a) => a.id === id)?.scope === "global" && !!info.shortcuts[id] && !info.registered.includes(id);
 
   return (
     <div className="overlay" onMouseDown={onClose}>
@@ -154,117 +163,140 @@ export default function Settings({ info, onChange, onClose, onUpdateFound, befor
           </button>
         </header>
 
-        <div className="setting">
-          <div>
-            <strong>Launch when Windows starts</strong>
-            <p>Starts quietly in the system tray so it’s always one keystroke away.</p>
-          </div>
-          <button
-            className={`switch ${autostart ? "on" : ""}`}
-            role="switch"
-            aria-checked={!!autostart}
-            disabled={autostart === null}
-            onClick={toggleAutostart}
-          >
-            <span />
-          </button>
-        </div>
-
-        <div className="setting block">
-          <div className="setting-head">
-            <div>
-              <strong>Keyboard shortcuts</strong>
-              <p>Click a shortcut, then press the new keys. Click it again to cancel.</p>
-            </div>
-            {!isDefault && (
-              <button className="tool" onClick={() => apply(DEFAULT_SHORTCUTS)}>
-                Reset to defaults
-              </button>
-            )}
-          </div>
-          {GROUPS.map((g) => (
-            <div key={g.scope}>
-              <h3 className="sc-group">{g.title}</h3>
-              <div className="sc-list">
-                {ACTIONS.filter((a) => a.scope === g.scope).map((a) => (
-                  <div key={a.id} className="sc-row">
-                    <span className="sc-label">
-                      {a.label}
-                      {unavailable(a.id) && recording !== a.id && (
-                        <span className="sc-warn">in use by another app — pick another</span>
-                      )}
-                    </span>
-                    <button
-                      className={`sc-key ${recording === a.id ? "rec" : ""} ${unavailable(a.id) ? "bad" : ""}`}
-                      onClick={() => {
-                        setScError("");
-                        setRecording(recording === a.id ? null : a.id);
-                      }}
-                    >
-                      {recording === a.id ? "Press keys…" : pretty(info.shortcuts[a.id])}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-          {scError && <p className="sc-error">{scError}</p>}
-          <p className="hint">
-            In quick capture, a plain Enter or Shift Enter shortcut doesn’t fire inside the notes box (it adds a
-            line there) — use <kbd>Ctrl Enter</kbd> to save from the notes.
-          </p>
-        </div>
-
-        <div className="setting block">
-          <div className="setting-head">
-            <div>
-              <strong>Updates</strong>
-              <p>
-                Version {appInfo?.version ?? "…"} · BrainTracker checks for new versions automatically and offers to
-                install them.
-              </p>
-            </div>
-            <button className="tool" onClick={checkUpdates} disabled={checking}>
-              {checking ? "Checking…" : "Check now"}
+        <nav className="tabs" role="tablist">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              role="tab"
+              aria-selected={tab === t.id}
+              className={`tab ${tab === t.id ? "on" : ""}`}
+              onClick={() => {
+                setRecording(null);
+                setScError("");
+                setTab(t.id);
+              }}
+            >
+              {t.label}
             </button>
-          </div>
-          {found && (
-            <div style={{ marginTop: 10 }}>
-              <UpdateBanner info={found} beforeInstall={beforeInstall} />
+          ))}
+        </nav>
+
+        {tab === "shortcuts" && (
+          <div className="setting block">
+            <div className="setting-head">
+              <div>
+                <p>Click a shortcut, then press the new keys. Click it again to cancel.</p>
+              </div>
+              {!isDefault && (
+                <button className="tool" onClick={() => apply(DEFAULT_SHORTCUTS)}>
+                  Reset to defaults
+                </button>
+              )}
             </div>
-          )}
-          {updateMsg && <p className="msg">{updateMsg}</p>}
-        </div>
-
-        <Backups />
-
-        <DataTools />
-
-        <div className="setting">
-          <div>
-            <strong>Your data{appInfo?.portable && <span className="badge">portable mode</span>}</strong>
-            <p className="path">{appInfo?.dataDir ?? "…"}</p>
-            <p>Entries live in braintracker.db, screenshots in the images folder.</p>
+            {GROUPS.map((g) => (
+              <div key={g.scope}>
+                <h3 className="sc-group">{g.title}</h3>
+                <div className="sc-list">
+                  {ACTIONS.filter((a) => a.scope === g.scope).map((a) => (
+                    <div key={a.id} className="sc-row">
+                      <span className="sc-label">
+                        {a.label}
+                        {unavailable(a.id) && recording !== a.id && (
+                          <span className="sc-warn">in use by another app — pick another</span>
+                        )}
+                      </span>
+                      <button
+                        className={`sc-key ${recording === a.id ? "rec" : ""} ${unavailable(a.id) ? "bad" : ""}`}
+                        onClick={() => {
+                          setScError("");
+                          setRecording(recording === a.id ? null : a.id);
+                        }}
+                      >
+                        {recording === a.id ? "Press keys…" : pretty(info.shortcuts[a.id])}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+            {scError && <p className="sc-error">{scError}</p>}
+            <p className="hint">
+              In quick capture, a plain Enter or Shift Enter shortcut doesn’t fire inside the notes box (it adds a
+              line there) — use <kbd>Ctrl Enter</kbd> to save from the notes.
+            </p>
           </div>
-          <button className="tool" onClick={() => appInfo && revealItemInDir(appInfo.dataDir)}>
-            Open folder
-          </button>
-        </div>
+        )}
 
-        <div className="setting">
-          <div>
-            <strong>Export</strong>
-            <p>Save every entry as a Markdown file in Documents\BrainTracker Export.</p>
-          </div>
-          <button className="tool" onClick={doExport}>
-            Export
-          </button>
-        </div>
+        {tab === "general" && (
+          <>
+            <div className="setting">
+              <div>
+                <strong>Launch when Windows starts</strong>
+                <p>Starts quietly in the system tray so it’s always one keystroke away.</p>
+              </div>
+              <button
+                className={`switch ${autostart ? "on" : ""}`}
+                role="switch"
+                aria-checked={!!autostart}
+                disabled={autostart === null}
+                onClick={toggleAutostart}
+              >
+                <span />
+              </button>
+            </div>
 
-        <p className="hint">
-          Closing the window keeps BrainTracker running in the tray. Use the tray icon → Quit to exit.
-        </p>
-        {msg && <p className="msg">{msg}</p>}
+            <div className="setting block">
+              <div className="setting-head">
+                <div>
+                  <strong>Updates</strong>
+                  <p>
+                    Version {appInfo?.version ?? "…"} · BrainTracker checks for new versions automatically and offers to
+                    install them.
+                  </p>
+                </div>
+                <button className="tool" onClick={checkUpdates} disabled={checking}>
+                  {checking ? "Checking…" : "Check now"}
+                </button>
+              </div>
+              {found && (
+                <div style={{ marginTop: 10 }}>
+                  <UpdateBanner info={found} beforeInstall={beforeInstall} />
+                </div>
+              )}
+              {updateMsg && <p className="msg">{updateMsg}</p>}
+            </div>
+
+            <Backups />
+
+            <DataTools />
+
+            <div className="setting">
+              <div>
+                <strong>Your data{appInfo?.portable && <span className="badge">portable mode</span>}</strong>
+                <p className="path">{appInfo?.dataDir ?? "…"}</p>
+                <p>Entries live in braintracker.db, screenshots in the images folder.</p>
+              </div>
+              <button className="tool" onClick={() => appInfo && revealItemInDir(appInfo.dataDir)}>
+                Open folder
+              </button>
+            </div>
+
+            <div className="setting">
+              <div>
+                <strong>Export</strong>
+                <p>Save every entry as a Markdown file in Documents\BrainTracker Export.</p>
+              </div>
+              <button className="tool" onClick={doExport}>
+                Export
+              </button>
+            </div>
+
+            <p className="hint">
+              Closing the window keeps BrainTracker running in the tray. Use the tray icon → Quit to exit.
+            </p>
+            {msg && <p className="msg">{msg}</p>}
+          </>
+        )}
       </div>
     </div>
   );

@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api, parseTags, trashApi, type Entry, type EntrySummary, type TagCount } from "./api";
 import { groupLabel, longDate, relative, shortWhen } from "./format";
-import Settings from "./Settings";
+import Settings, { type SettingsTab } from "./Settings";
 import UpdateBanner from "./UpdateBanner";
 import Trash from "./Trash";
 import History from "./History";
+import Snippet from "./Snippet";
 import type { UpdateInfo } from "./api";
 import { imageFiles, imageNames, insertImages, IMG_BASE } from "./images";
 import { handleMarkdownClick, isInsideCopyButton, renderMarkdown } from "./markdown";
@@ -52,7 +53,9 @@ export default function App() {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [preview, setPreview] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  /** Which Settings tab is showing, or null when Settings is closed. */
+  const [settingsTab, setSettingsTab] = useState<SettingsTab | null>(null);
+  const settingsOpen = settingsTab !== null;
   const [tagFocus, setTagFocus] = useState(false);
   const [searchFocus, setSearchFocus] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
@@ -64,8 +67,7 @@ export default function App() {
   const [, tick] = useState(0);
   const [scInfo, setScInfo] = useState<ShortcutsInfo>({
     shortcuts: DEFAULT_SHORTCUTS,
-    mainRegistered: true,
-    captureRegistered: true,
+    registered: ["showMain", "capture", "captureSelection", "spotlight"],
   });
   const sc = scInfo.shortcuts;
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
@@ -245,7 +247,7 @@ export default function App() {
         if (draftRef.current) setPreview((p) => !p);
       } else if (matches(e, sc.settings)) {
         e.preventDefault();
-        setSettingsOpen(true);
+        setSettingsTab("general");
       } else if (matches(e, "Ctrl+S")) {
         e.preventDefault();
         flush(); // it auto-saves anyway; this just saves immediately
@@ -379,7 +381,7 @@ export default function App() {
             ✓
           </span>
           <span className="brand-name">BrainTracker</span>
-          <button className="icon-btn" title={`Settings (${sc.settings})`} onClick={() => setSettingsOpen(true)}>
+          <button className="icon-btn" title={`Settings (${sc.settings})`} onClick={() => setSettingsTab("general")}>
             ⚙
           </button>
         </div>
@@ -617,10 +619,16 @@ export default function App() {
                 <kbd>{pretty(sc.capture)}</kbd> quick capture from anywhere
               </li>
               <li>
+                <kbd>{pretty(sc.captureSelection)}</kbd> quick capture with the text you have selected
+              </li>
+              <li>
+                <kbd>{pretty(sc.spotlight)}</kbd> quick search from anywhere
+              </li>
+              <li>
                 <kbd>{pretty(sc.showMain)}</kbd> show / hide this window from anywhere
               </li>
               <li>
-                <button className="link" onClick={() => setSettingsOpen(true)}>
+                <button className="link" onClick={() => setSettingsTab("shortcuts")}>
                   Change shortcuts…
                 </button>
               </li>
@@ -670,8 +678,9 @@ export default function App() {
       {settingsOpen && (
         <Settings
           info={scInfo}
+          initialTab={settingsTab ?? "general"}
           onChange={setScInfo}
-          onClose={() => setSettingsOpen(false)}
+          onClose={() => setSettingsTab(null)}
           onUpdateFound={(u) => {
             setUpdate(u);
             setUpdateDismissed(null);
@@ -680,16 +689,5 @@ export default function App() {
         />
       )}
     </div>
-  );
-}
-
-function Snippet({ text }: { text: string }) {
-  const parts = text.split(/(\u0001[^\u0002]*\u0002)/g);
-  return (
-    <>
-      {parts.map((p, i) =>
-        p.startsWith("\u0001") ? <mark key={i}>{p.slice(1, -1)}</mark> : <span key={i}>{p}</span>,
-      )}
-    </>
   );
 }

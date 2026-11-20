@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 export interface Shortcuts {
   showMain: string;
   capture: string;
+  captureSelection: string;
+  spotlight: string;
   newEntry: string;
   search: string;
   preview: string;
@@ -17,13 +19,15 @@ export type ShortcutAction = keyof Shortcuts;
 
 export interface ShortcutsInfo {
   shortcuts: Shortcuts;
-  mainRegistered: boolean;
-  captureRegistered: boolean;
+  /** System-wide shortcuts that are working (one is missing if another app owns its keys). */
+  registered: ShortcutAction[];
 }
 
 export const DEFAULT_SHORTCUTS: Shortcuts = {
   showMain: "Ctrl+Shift+Space",
   capture: "Ctrl+Shift+E",
+  captureSelection: "Ctrl+Shift+D",
+  spotlight: "Ctrl+Alt+Space",
   newEntry: "Ctrl+T",
   search: "Ctrl+K",
   preview: "Ctrl+E",
@@ -41,6 +45,8 @@ export type ShortcutScope = "global" | "app" | "capture";
 export const ACTIONS: { id: ShortcutAction; label: string; scope: ShortcutScope }[] = [
   { id: "showMain", label: "Show / hide BrainTracker", scope: "global" },
   { id: "capture", label: "Quick capture", scope: "global" },
+  { id: "captureSelection", label: "Quick capture with the selected text", scope: "global" },
+  { id: "spotlight", label: "Quick search", scope: "global" },
   { id: "newEntry", label: "New entry", scope: "app" },
   { id: "search", label: "Search", scope: "app" },
   { id: "preview", label: "Toggle preview", scope: "app" },
@@ -56,7 +62,7 @@ export const ACTIONS: { id: ShortcutAction; label: string; scope: ShortcutScope 
 export function findClash(shortcuts: Shortcuts, id: ShortcutAction, combo: string) {
   const scope = ACTIONS.find((a) => a.id === id)!.scope;
   return ACTIONS.find(
-    (a) => a.id !== id && shortcuts[a.id] === combo && (a.scope === scope || a.scope === "global" || scope === "global"),
+    (a) => a.id !== id && !!combo && shortcuts[a.id] === combo && (a.scope === scope || a.scope === "global" || scope === "global"),
   );
 }
 
@@ -124,7 +130,8 @@ export function matches(e: KeyboardEvent, combo: string): boolean {
   return comboFromEvent(e) === combo;
 }
 
-/** For <kbd>: "Ctrl+Shift+E" -> "Ctrl Shift E" */
+/** For <kbd>: "Ctrl+Shift+E" -> "Ctrl Shift E" ("" means the shortcut isn't set). */
 export function pretty(combo: string): string {
+  if (!combo) return "Not set";
   return combo.split("+").join(" ").replace("Escape", "Esc");
 }

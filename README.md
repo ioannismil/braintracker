@@ -29,13 +29,13 @@ the setting you changed, the screenshot that explains it. Find any of it again i
 <td width="50%" valign="top">
 
 ### ⚡ Capture in seconds
-Press <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>E</kbd> anywhere — a small popup appears on top of whatever you're doing. Type what you did, hit <kbd>Enter</kbd>, done. Click away and your half-written note is kept.
+Press <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>E</kbd> anywhere — a small popup appears on top of whatever you're doing. Type what you did, hit <kbd>Enter</kbd>, done. Click away and your half-written note is kept. Select some text in any app and press <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>D</kbd> instead to drop it straight into the notes of a new entry.
 
 </td>
 <td width="50%" valign="top">
 
 ### 🔎 Find anything instantly
-Full-text search across titles, notes and tags, as you type, with highlighted matches. Partial words match, so `dock` finds *Docker*. Narrow it down with filters like `tag:docker`, `has:image` or `after:2026-10`.
+Full-text search across titles, notes and tags, as you type, with highlighted matches. Partial words match, so `dock` finds *Docker*. Narrow it down with filters like `tag:docker`, `has:image` or `after:2026-10`. Or press <kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>Space</kbd> anywhere for a Spotlight-style search bar that shows your notes as you type.
 
 </td>
 </tr>
@@ -118,12 +118,14 @@ Grab the latest version from the **[Releases page](https://github.com/ioannismil
 |---|---|---|
 | Show / hide BrainTracker | <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Space</kbd> | 🌐 anywhere |
 | Quick capture | <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>E</kbd> | 🌐 anywhere |
+| Quick capture with the selected text | <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>D</kbd> | 🌐 anywhere |
+| Quick search | <kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>Space</kbd> | 🌐 anywhere |
 | New entry | <kbd>Ctrl</kbd> <kbd>T</kbd> | in the app |
 | Search | <kbd>Ctrl</kbd> <kbd>K</kbd> | in the app |
 | Toggle Markdown preview | <kbd>Ctrl</kbd> <kbd>E</kbd> | in the app |
 | Settings | <kbd>Ctrl</kbd> <kbd>,</kbd> | in the app |
 
-All of these can be changed in **Settings → Keyboard shortcuts** — click one, press the new keys. Shortcuts follow the physical key, so they work on any keyboard layout.
+All of these can be changed in **Settings → Keyboard shortcuts** — click one, press the new keys. Your choices are kept when BrainTracker updates; a shortcut added in a new version never takes keys you already use. Shortcuts follow the physical key, so they work on any keyboard layout.
 
 ### 🔎 Search filters
 
@@ -146,6 +148,7 @@ Example: `vpn tag:home after:2026-01 has:code`
 |---|---|
 | Search box | <kbd>↑</kbd> <kbd>↓</kbd> browse results · <kbd>Enter</kbd> open · <kbd>Enter</kbd> with no results creates an entry with that title · <kbd>Esc</kbd> clear |
 | Quick capture | <kbd>Enter</kbd> save (stays open for the next one) · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> save & close · <kbd>Shift</kbd>+<kbd>Enter</kbd> jump to notes · <kbd>Ctrl</kbd>+<kbd>O</kbd> open app · <kbd>Esc</kbd> close — all changeable in Settings |
+| Quick search | type to find notes · <kbd>↑</kbd> <kbd>↓</kbd> choose · <kbd>Enter</kbd> show the whole note · <kbd>Enter</kbd> again or <kbd>Ctrl</kbd>+<kbd>Enter</kbd> open it in BrainTracker · <kbd>Esc</kbd> back / clear / close |
 | Editor | <kbd>Tab</kbd> indents · <kbd>Ctrl</kbd>+<kbd>V</kbd> pastes screenshots · double-click the preview to edit |
 
 </details>
