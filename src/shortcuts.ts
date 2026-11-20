@@ -5,6 +5,7 @@ export interface Shortcuts {
   capture: string;
   captureSelection: string;
   spotlight: string;
+  spotlightSelection: string;
   newEntry: string;
   search: string;
   preview: string;
@@ -28,6 +29,7 @@ export const DEFAULT_SHORTCUTS: Shortcuts = {
   capture: "Ctrl+Shift+E",
   captureSelection: "Ctrl+Shift+D",
   spotlight: "Ctrl+Alt+Space",
+  spotlightSelection: "Ctrl+Alt+Shift+Space",
   newEntry: "Ctrl+T",
   search: "Ctrl+K",
   preview: "Ctrl+E",
@@ -47,6 +49,7 @@ export const ACTIONS: { id: ShortcutAction; label: string; scope: ShortcutScope 
   { id: "capture", label: "Quick capture", scope: "global" },
   { id: "captureSelection", label: "Quick capture with the selected text", scope: "global" },
   { id: "spotlight", label: "Quick search", scope: "global" },
+  { id: "spotlightSelection", label: "Quick search for the selected text", scope: "global" },
   { id: "newEntry", label: "New entry", scope: "app" },
   { id: "search", label: "Search", scope: "app" },
   { id: "preview", label: "Toggle preview", scope: "app" },

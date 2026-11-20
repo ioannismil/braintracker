@@ -31,13 +31,16 @@ Options:
   --append <text>         With edit: add text to the end of the note (- for stdin)
   --title <text>          With edit: a new title
   --tags <a,b>            Comma-separated tags (with edit, replaces them)
-  --selection             With add: put the text selected in the app in front into the note
+  --selection             With add: put the text selected in the app in front into the note;
+                          with search --open: search for the selected text
   --tag <tag>             With list: only notes with this tag
   --limit <n>             With list/search: at most n notes (list defaults to 20)
   --json                  Machine-readable output
   --open                  Do it in the app instead:
                             bt --open                 show BrainTracker
                             bt search [words] --open  quick search
+                            bt search --open --selection
+                                                      quick search for the selected text
                             bt add --open             quick capture
                             bt add --open --selection quick capture with the selected text
                             bt show <id> --open       open the note in BrainTracker
@@ -59,6 +62,7 @@ pub enum GuiAction {
     Search(Option<String>),
     Capture,
     CaptureSelection,
+    SearchSelection,
 }
 
 /// Something to do straight on the database, printing to the terminal.
@@ -170,6 +174,9 @@ pub fn parse(args: &[String]) -> Parsed {
         "list" | "ls" => Cmd::List { tag: o.tag, limit: o.limit.unwrap_or(20) },
         "search" | "find" => {
             let query = words(1);
+            if o.open && o.selection {
+                return Parsed::Gui(Some(GuiAction::SearchSelection));
+            }
             if o.open {
                 return Parsed::Gui(Some(GuiAction::Search(Some(query).filter(|q| !q.trim().is_empty()))));
             }
@@ -643,6 +650,7 @@ mod tests {
         assert_eq!(p("search docker dns --open"), Parsed::Gui(Some(GuiAction::Search(Some("docker dns".into())))));
         assert_eq!(p("add --open"), Parsed::Gui(Some(GuiAction::Capture)));
         assert_eq!(p("add --open --selection"), Parsed::Gui(Some(GuiAction::CaptureSelection)));
+        assert_eq!(p("search --open --selection"), Parsed::Gui(Some(GuiAction::SearchSelection)));
         assert_eq!(p("show 12 --open"), Parsed::Gui(Some(GuiAction::OpenEntry(12))));
     }
 

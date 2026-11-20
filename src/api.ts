@@ -122,6 +122,8 @@ export const backupApi = {
 export const api = {
   listEntries: (query: string | null, tag: string | null) =>
     invoke<EntrySummary[]>("list_entries", { query, tag }),
+  /** Entries matching any of the words, best first (for when none has all of them). */
+  searchAny: (query: string) => invoke<EntrySummary[]>("search_any", { query }),
   getEntry: (id: number) => invoke<Entry | null>("get_entry", { id }),
   createEntry: (title?: string, tags?: string[], body?: string) =>
     invoke<Entry>("create_entry", { title: title ?? null, body: body ?? null, tags: tags ?? null }),

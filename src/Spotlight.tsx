@@ -18,6 +18,8 @@ const RECENT = 6;
 export default function Spotlight() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<EntrySummary[]>([]);
+  /** No note has every word, so these are the notes matching the most of them. */
+  const [closest, setClosest] = useState(false);
   const [sel, setSel] = useState(0);
   const [open, setOpen] = useState<Entry | null>(null);
   const [error, setError] = useState("");
@@ -31,9 +33,23 @@ export default function Spotlight() {
   const search = useCallback(async (q: string) => {
     const n = ++seq.current;
     try {
-      const all = await api.listEntries(q.trim() || null, null);
+      const text = q.trim();
+      const all = await api.listEntries(text || null, null);
       if (n !== seq.current) return; // a newer search already started
-      setResults(q.trim() ? all : all.slice(0, RECENT));
+      let shown = text ? all : all.slice(0, RECENT);
+      // Searching for a whole error message (e.g. the selected text): if no note has every
+      // word, show the ones that match the most of them instead of nothing.
+      let loose = false;
+      if (!all.length && text.split(/\s+/).length > 1) {
+        const any = await api.searchAny(text);
+        if (n !== seq.current) return;
+        if (any.length) {
+          shown = any;
+          loose = true;
+        }
+      }
+      setResults(shown);
+      setClosest(loose);
       setSel(0);
       setError("");
     } catch (e) {
@@ -197,6 +213,9 @@ export default function Spotlight() {
           <>
             <div className="spot-list" ref={listRef}>
               {!searching && results.length > 0 && <div className="spot-group">Recent</div>}
+              {searching && closest && (
+                <div className="spot-group">No note has all of those words. Closest matches</div>
+              )}
               {results.map((r, i) => (
                 <button
                   key={r.id}

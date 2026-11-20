@@ -43,7 +43,7 @@ Press <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>E</kbd> anywhere — a small popup a
 <td width="50%" valign="top">
 
 ### 🔎 Find anything instantly
-Full-text search across titles, notes and tags, as you type, with highlighted matches. Partial words match, so `dock` finds *Docker*. Narrow it down with filters like `tag:docker`, `has:image` or `after:2026-10`. Or press <kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>Space</kbd> anywhere for a Spotlight-style search bar that shows your notes as you type.
+Full-text search across titles, notes and tags, as you type, with highlighted matches. Partial words match, so `dock` finds *Docker*. Narrow it down with filters like `tag:docker`, `has:image` or `after:2026-10`. Or press <kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>Space</kbd> anywhere for a Spotlight-style search bar that shows your notes as you type. Staring at an error? Select it and press <kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>Shift</kbd> <kbd>Space</kbd> to search for it; if no note has every word, you get the closest matches.
 
 </td>
 </tr>
@@ -51,7 +51,7 @@ Full-text search across titles, notes and tags, as you type, with highlighted ma
 <td valign="top">
 
 ### 📝 Notes that hold the "how"
-Markdown with code blocks (each with a one-click **Copy** button), lists and links. Paste screenshots straight in with <kbd>Ctrl</kbd> <kbd>V</kbd>. Everything auto-saves as you type.
+Markdown with code blocks (each with a one-click **Copy** button), lists and links. Paste screenshots straight in with <kbd>Ctrl</kbd> <kbd>V</kbd>, and the text in them becomes searchable too (read offline by Windows' built-in OCR), so searching an error code finds the screenshot of that error. Everything auto-saves as you type.
 
 </td>
 <td valign="top">
@@ -128,6 +128,7 @@ Grab the latest version from the **[Releases page](https://github.com/ioannismil
 | Quick capture | <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>E</kbd> | 🌐 anywhere |
 | Quick capture with the selected text | <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>D</kbd> | 🌐 anywhere |
 | Quick search | <kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>Space</kbd> | 🌐 anywhere |
+| Quick search for the selected text | <kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>Shift</kbd> <kbd>Space</kbd> | 🌐 anywhere |
 | New entry | <kbd>Ctrl</kbd> <kbd>T</kbd> | in the app |
 | Search | <kbd>Ctrl</kbd> <kbd>K</kbd> | in the app |
 | Toggle Markdown preview | <kbd>Ctrl</kbd> <kbd>E</kbd> | in the app |
@@ -182,6 +183,7 @@ Add **`--open`** to do it in the app instead:
 |---|---|
 | `bt --open` | BrainTracker |
 | `bt search [words] --open` | Quick search (with those words typed in) |
+| `bt search --open --selection` | Quick search for the text selected in the app in front |
 | `bt add --open` | Quick capture |
 | `bt add --open --selection` | Quick capture with the text selected in the app in front |
 | `bt show 12 --open` | Note #12 in BrainTracker |
@@ -203,7 +205,9 @@ Everything stays on your machine.
 | Installed | `%APPDATA%\com.braintracker.app\` |
 | Portable | `data\` next to `BrainTracker.exe` |
 
-Inside you'll find `braintracker.db` (all entries) and `images\` (pasted screenshots).
+Inside you'll find `braintracker.db` (all entries, plus the text read from your screenshots) and `images\` (pasted screenshots).
+
+**Text in screenshots** is read in the background by Windows' own OCR. Nothing is uploaded. Screenshots from before this feature are read the first time the app starts. It uses the OCR languages installed in Windows (**Settings → Time & language → Language & region**); with none, screenshots simply aren't searchable.
 
 **Backups** run automatically once a day when something changed, into `Documents\BrainTracker Backups` (portable: `data\backups`). Change the folder, how many to keep, or restore one in **Settings → Automatic backups**. A restore always saves a *before-restore* snapshot of your current data first, and keeps your current settings.
 

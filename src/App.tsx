@@ -67,7 +67,7 @@ export default function App() {
   const [, tick] = useState(0);
   const [scInfo, setScInfo] = useState<ShortcutsInfo>({
     shortcuts: DEFAULT_SHORTCUTS,
-    registered: ["showMain", "capture", "captureSelection", "spotlight"],
+    registered: ["showMain", "capture", "captureSelection", "spotlight", "spotlightSelection"],
   });
   const sc = scInfo.shortcuts;
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
@@ -637,6 +637,9 @@ export default function App() {
               </li>
               <li>
                 <kbd>{pretty(sc.spotlight)}</kbd> quick search from anywhere
+              </li>
+              <li>
+                <kbd>{pretty(sc.spotlightSelection)}</kbd> quick search for the text you have selected
               </li>
               <li>
                 <kbd>{pretty(sc.showMain)}</kbd> show / hide this window from anywhere

@@ -35,22 +35,12 @@ CREATE TABLE IF NOT EXISTS entries (
     -- deleted_at INTEGER (added by migrate(): NULL = live, otherwise when it was trashed)
 );
 
-CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
-    title, body, tags,
-    content = 'entries', content_rowid = 'id',
-    tokenize = 'unicode61 remove_diacritics 2'
+-- Text read from screenshots by OCR (ocr.rs), keyed by the file name in the images folder.
+CREATE TABLE IF NOT EXISTS image_text (
+    name     TEXT PRIMARY KEY,
+    text     TEXT    NOT NULL DEFAULT '',   -- '' = read, but no text found
+    read_at  INTEGER NOT NULL
 );
-
-CREATE TRIGGER IF NOT EXISTS entries_ai AFTER INSERT ON entries BEGIN
-    INSERT INTO entries_fts(rowid, title, body, tags) VALUES (new.id, new.title, new.body, new.tags);
-END;
-CREATE TRIGGER IF NOT EXISTS entries_ad AFTER DELETE ON entries BEGIN
-    INSERT INTO entries_fts(entries_fts, rowid, title, body, tags) VALUES ('delete', old.id, old.title, old.body, old.tags);
-END;
-CREATE TRIGGER IF NOT EXISTS entries_au AFTER UPDATE OF title, body, tags ON entries BEGIN
-    INSERT INTO entries_fts(entries_fts, rowid, title, body, tags) VALUES ('delete', old.id, old.title, old.body, old.tags);
-    INSERT INTO entries_fts(rowid, title, body, tags) VALUES (new.id, new.title, new.body, new.tags);
-END;
 
 CREATE TABLE IF NOT EXISTS entry_versions (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,6 +58,39 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT NOT NULL
 );
 "#;
+
+/// The search index (created by ensure_search_index). It keeps its own copy of the text so
+/// it can also hold the text of each entry's screenshots, which isn't in the entry itself.
+/// The triggers keep the names older versions used: an older copy of the app (or `bt`) that
+/// opens this database then sees them as already there and leaves them alone, rather than
+/// adding its own, which don't work with this index.
+const SEARCH_SCHEMA: &str = r#"
+CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
+    title, body, tags, screenshots,
+    tokenize = 'unicode61 remove_diacritics 2'
+);
+
+CREATE TRIGGER IF NOT EXISTS entries_ai AFTER INSERT ON entries BEGIN
+    INSERT INTO entries_fts(rowid, title, body, tags, screenshots)
+    VALUES (new.id, new.title, new.body, new.tags, {SHOTS_NEW});
+END;
+CREATE TRIGGER IF NOT EXISTS entries_ad AFTER DELETE ON entries BEGIN
+    DELETE FROM entries_fts WHERE rowid = old.id;
+END;
+CREATE TRIGGER IF NOT EXISTS entries_au AFTER UPDATE OF title, body, tags ON entries BEGIN
+    DELETE FROM entries_fts WHERE rowid = old.id;
+    INSERT INTO entries_fts(rowid, title, body, tags, screenshots)
+    VALUES (new.id, new.title, new.body, new.tags, {SHOTS_NEW});
+END;
+"#;
+
+/// SQL for the text of every screenshot an entry body (`{BODY}`) shows.
+const SHOTS_OF: &str = "(SELECT coalesce(group_concat(t.text, ' '), '') FROM image_text t
+     WHERE t.text != '' AND instr({BODY}, '](img:' || t.name || ')') > 0)";
+
+fn shots_of(body_sql: &str) -> String {
+    SHOTS_OF.replace("{BODY}", body_sql)
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -140,7 +163,39 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
 
 fn init(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(SCHEMA)?;
-    migrate(conn)
+    migrate(conn)?;
+    ensure_search_index(conn)
+}
+
+/// Creates the search index, or rebuilds it from the entries if it's from an older version
+/// (which indexed straight from `entries` and had no screenshot text).
+fn ensure_search_index(conn: &Connection) -> rusqlite::Result<()> {
+    let current: i64 = conn.query_row(
+        "SELECT count(*) FROM pragma_table_info('entries_fts') WHERE name = 'screenshots'",
+        [],
+        |r| r.get(0),
+    )?;
+    let schema = SEARCH_SCHEMA.replace("{SHOTS_NEW}", &shots_of("new.body"));
+    if current > 0 {
+        return conn.execute_batch(&schema); // also re-creates a missing trigger
+    }
+    let tx = conn.unchecked_transaction()?;
+    tx.execute_batch(
+        "DROP TRIGGER IF EXISTS entries_ai;
+         DROP TRIGGER IF EXISTS entries_ad;
+         DROP TRIGGER IF EXISTS entries_au;
+         DROP TABLE IF EXISTS entries_fts;",
+    )?;
+    tx.execute_batch(&schema)?;
+    tx.execute(
+        &format!(
+            "INSERT INTO entries_fts(rowid, title, body, tags, screenshots)
+             SELECT e.id, e.title, e.body, e.tags, {} FROM entries e",
+            shots_of("e.body")
+        ),
+        [],
+    )?;
+    tx.commit()
 }
 
 /// Upgrades databases created by older versions in place.
@@ -199,17 +254,20 @@ fn decode_tags(raw: &str) -> Vec<String> {
 }
 
 /// Turns free text into a safe FTS5 query: every word must match, as a prefix.
-fn fts_query(input: &str) -> Option<String> {
+/// With `any`, one matching word is enough (words shorter than 3 letters are left out, as
+/// they'd match nearly everything).
+fn fts_query(input: &str, any: bool) -> Option<String> {
     let terms: Vec<String> = input
         .split_whitespace()
         .map(|w| w.replace('"', ""))
         .filter(|w| !w.is_empty())
+        .filter(|w| !any || w.chars().filter(|c| c.is_alphanumeric()).count() >= 3)
         .map(|w| format!("\"{w}\"*"))
         .collect();
     if terms.is_empty() {
         None
     } else {
-        Some(terms.join(" "))
+        Some(terms.join(if any { " OR " } else { " " }))
     }
 }
 
@@ -340,6 +398,21 @@ pub fn list_entries(
     query: Option<&str>,
     tag: Option<&str>,
 ) -> rusqlite::Result<Vec<EntrySummary>> {
+    search(conn, query, tag, false)
+}
+
+/// Entries matching any of the words (filters still apply), best matches first — for when
+/// no entry has all of them, e.g. a whole error message searched for.
+pub fn search_any(conn: &Connection, query: &str) -> rusqlite::Result<Vec<EntrySummary>> {
+    if fts_query(&parse_query(query).text, true).is_none() {
+        return Ok(Vec::new());
+    }
+    let mut hits = search(conn, Some(query), None, true)?;
+    hits.truncate(20);
+    Ok(hits)
+}
+
+fn search(conn: &Connection, query: Option<&str>, tag: Option<&str>, any: bool) -> rusqlite::Result<Vec<EntrySummary>> {
     let filters = parse_query(query.unwrap_or(""));
     let (conds, mut args) = filter_sql(&filters, tag.filter(|t| !t.is_empty()));
 
@@ -355,13 +428,13 @@ pub fn list_entries(
         })
     };
 
-    if let Some(q) = fts_query(&filters.text) {
+    if let Some(q) = fts_query(&filters.text, any) {
         let sql = format!(
             "SELECT e.id, e.title, snippet(entries_fts, -1, char(1), char(2), '…', 16),
                     e.tags, e.pinned, e.created_at, e.updated_at
              FROM entries_fts JOIN entries e ON e.id = entries_fts.rowid
              WHERE entries_fts MATCH ? AND {conds}
-             ORDER BY bm25(entries_fts, 10.0, 1.0, 5.0)
+             ORDER BY bm25(entries_fts, 10.0, 1.0, 5.0, 1.0)
              LIMIT 300"
         );
         args.insert(0, Value::Text(q));
@@ -677,6 +750,40 @@ pub fn referenced_images(conn: &Connection) -> rusqlite::Result<HashSet<String>>
     Ok(out)
 }
 
+/// Stores the text read from a screenshot and re-indexes the entries that show it.
+pub fn set_image_text(conn: &Connection, name: &str, text: &str) -> rusqlite::Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "INSERT INTO image_text (name, text, read_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT(name) DO UPDATE SET text = excluded.text, read_at = excluded.read_at",
+        params![name, text.trim(), now_ms()],
+    )?;
+    tx.execute(
+        &format!(
+            "UPDATE entries_fts SET screenshots = {}
+             WHERE rowid IN (SELECT id FROM entries WHERE instr(body, '](img:' || ?1 || ')') > 0)",
+            shots_of("(SELECT body FROM entries WHERE id = entries_fts.rowid)")
+        ),
+        params![name],
+    )?;
+    tx.commit()
+}
+
+/// Screenshots whose text has already been read (whether or not any was found).
+pub fn read_images(conn: &Connection) -> rusqlite::Result<HashSet<String>> {
+    let mut stmt = conn.prepare("SELECT name FROM image_text")?;
+    let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+    rows.collect()
+}
+
+/// Drops the read text of screenshots that were deleted.
+pub fn forget_image_text(conn: &Connection, names: &[String]) -> rusqlite::Result<()> {
+    for name in names {
+        conn.execute("DELETE FROM image_text WHERE name = ?1", params![name])?;
+    }
+    Ok(())
+}
+
 // ---------- backup helpers ----------
 
 /// Cheap "did anything change?" signature, so daily backups skip identical copies.
@@ -850,6 +957,96 @@ mod tests {
         init(&c).unwrap();
         init(&c).unwrap(); // idempotent
         assert_eq!(list_entries(&c, None, None).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn screenshot_text_is_searchable() {
+        let c = mem();
+        let e = create_entry(&c, "Installer failed", "see ![](img:1-0.png)", &[]).unwrap();
+        let other = create_entry(&c, "Unrelated", "no images", &[]).unwrap();
+        let ids = |q: &str| list_entries(&c, Some(q), None).unwrap().iter().map(|e| e.id).collect::<Vec<_>>();
+        assert!(ids("0x80070005").is_empty());
+
+        // OCR finishes after the entry was saved...
+        set_image_text(&c, "1-0.png", "Error 0x80070005\nAccess is denied").unwrap();
+        assert_eq!(ids("0x80070005"), vec![e.id]);
+        assert_eq!(ids("installer denied"), vec![e.id]); // title + screenshot together
+        let hit = &list_entries(&c, Some("denied"), None).unwrap()[0];
+        assert!(hit.snippet.contains("Access"));
+
+        // ...or before: a later entry showing the same image gets its text straight away.
+        let again = create_entry(&c, "Same screenshot", "![](img:1-0.png)", &[]).unwrap();
+        let mut both = ids("0x80070005");
+        both.sort();
+        assert_eq!(both, vec![e.id, again.id]);
+
+        // Edits keep it, removing the image drops it.
+        update_entry(&c, e.id, "Installer failed", "see ![](img:1-0.png) and ran as admin", &[]).unwrap();
+        assert!(ids("0x80070005").contains(&e.id));
+        update_entry(&c, e.id, "Installer failed", "ran as admin", &[]).unwrap();
+        assert!(!ids("0x80070005").contains(&e.id));
+        assert!(!ids("denied").contains(&other.id));
+
+        assert!(read_images(&c).unwrap().contains("1-0.png"));
+        forget_image_text(&c, &["1-0.png".into()]).unwrap();
+        assert!(read_images(&c).unwrap().is_empty());
+    }
+
+    #[test]
+    fn search_any_word_ranks_partial_matches() {
+        let c = mem();
+        let a = create_entry(&c, "WSL DNS broken", "fixed resolv.conf", &[]).unwrap();
+        create_entry(&c, "Printer", "driver reinstall", &[]).unwrap();
+        let q = "Temporary failure in name resolution: wsl dns";
+        assert!(list_entries(&c, Some(q), None).unwrap().is_empty()); // not every word
+        let hits = search_any(&c, q).unwrap();
+        assert_eq!(hits.iter().map(|h| h.id).collect::<Vec<_>>(), vec![a.id]);
+        assert!(search_any(&c, "a in of").unwrap().is_empty()); // only short words
+        assert!(search_any(&c, "").unwrap().is_empty());
+    }
+
+    #[test]
+    fn upgrades_old_search_index() {
+        // A database from before screenshot search: FTS indexed straight from `entries`.
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE entries (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL DEFAULT '',
+             body TEXT NOT NULL DEFAULT '', tags TEXT NOT NULL DEFAULT '', pinned INTEGER NOT NULL DEFAULT 0,
+             created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, deleted_at INTEGER);
+             CREATE VIRTUAL TABLE entries_fts USING fts5(title, body, tags, content = 'entries', content_rowid = 'id');
+             CREATE TRIGGER entries_ai AFTER INSERT ON entries BEGIN
+               INSERT INTO entries_fts(rowid, title, body, tags) VALUES (new.id, new.title, new.body, new.tags);
+             END;
+             INSERT INTO entries (title, body, created_at, updated_at) VALUES ('old docker note', 'body', 1, 1);",
+        )
+        .unwrap();
+        init(&c).unwrap();
+        init(&c).unwrap(); // idempotent
+        assert_eq!(list_entries(&c, Some("docker"), None).unwrap().len(), 1);
+        let trigger: String = c
+            .query_row("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'entries_ai'", [], |r| r.get(0))
+            .unwrap();
+        assert!(trigger.contains("screenshots"), "the old trigger was replaced");
+        let e = create_entry(&c, "new note", "after upgrade", &[]).unwrap();
+        update_entry(&c, e.id, "new note", "edited after upgrade", &[]).unwrap();
+        assert_eq!(list_entries(&c, Some("edited"), None).unwrap().len(), 1);
+        purge_entry(&c, e.id).unwrap();
+        assert!(list_entries(&c, Some("edited"), None).unwrap().is_empty());
+    }
+
+    #[test]
+    fn older_version_reopening_an_upgraded_database_keeps_working() {
+        let c = mem();
+        let e = create_entry(&c, "note", "first", &[]).unwrap();
+        // What an older version runs at startup: its own triggers, only if missing.
+        c.execute_batch(
+            "CREATE TRIGGER IF NOT EXISTS entries_au AFTER UPDATE OF title, body, tags ON entries BEGIN
+               INSERT INTO entries_fts(entries_fts, rowid, title, body, tags) VALUES ('delete', old.id, old.title, old.body, old.tags);
+             END;",
+        )
+        .unwrap();
+        update_entry(&c, e.id, "note", "second", &[]).unwrap();
+        assert_eq!(list_entries(&c, Some("second"), None).unwrap().len(), 1);
     }
 
     #[test]

@@ -2,6 +2,7 @@ mod backup;
 mod cli;
 mod db;
 mod import;
+mod ocr;
 mod selection;
 mod updates;
 
@@ -42,6 +43,7 @@ struct Shortcuts {
     capture: String,
     capture_selection: String,
     spotlight: String,
+    spotlight_selection: String,
     new_entry: String,
     search: String,
     preview: String,
@@ -60,6 +62,7 @@ impl Default for Shortcuts {
             capture: "Ctrl+Shift+E".into(),
             capture_selection: "Ctrl+Shift+D".into(),
             spotlight: "Ctrl+Alt+Space".into(),
+            spotlight_selection: "Ctrl+Alt+Shift+Space".into(),
             new_entry: "Ctrl+T".into(),
             search: "Ctrl+K".into(),
             preview: "Ctrl+E".into(),
@@ -113,10 +116,17 @@ enum Global {
     Capture,
     CaptureSelection,
     Spotlight,
+    SpotlightSelection,
 }
 
 impl Global {
-    const ALL: [Global; 4] = [Global::ShowMain, Global::Capture, Global::CaptureSelection, Global::Spotlight];
+    const ALL: [Global; 5] = [
+        Global::ShowMain,
+        Global::Capture,
+        Global::CaptureSelection,
+        Global::Spotlight,
+        Global::SpotlightSelection,
+    ];
 
     /// Matches the field name the UI uses.
     fn id(self) -> &'static str {
@@ -125,6 +135,7 @@ impl Global {
             Global::Capture => "capture",
             Global::CaptureSelection => "captureSelection",
             Global::Spotlight => "spotlight",
+            Global::SpotlightSelection => "spotlightSelection",
         }
     }
 
@@ -134,6 +145,7 @@ impl Global {
             Global::Capture => &s.capture,
             Global::CaptureSelection => &s.capture_selection,
             Global::Spotlight => &s.spotlight,
+            Global::SpotlightSelection => &s.spotlight_selection,
         }
     }
 }
@@ -321,6 +333,14 @@ fn list_entries(
     db::list_entries(&conn, query.as_deref(), tag.as_deref()).map_err(err)
 }
 
+/// Entries matching any of the words, best first — what quick search shows when no entry
+/// has all of them (e.g. when searching for a whole error message).
+#[tauri::command]
+fn search_any(db: State<Db>, query: String) -> CmdResult<Vec<EntrySummary>> {
+    let conn = db.0.lock().map_err(err)?;
+    db::search_any(&conn, &query).map_err(err)
+}
+
 #[tauri::command]
 fn get_entry(db: State<Db>, id: i64) -> CmdResult<Option<Entry>> {
     let conn = db.0.lock().map_err(err)?;
@@ -459,6 +479,7 @@ fn store_image(app: &AppHandle, bytes: &[u8], ext: &str) -> Result<String, Strin
     let n = IMAGE_COUNTER.fetch_add(1, Ordering::Relaxed);
     let name = format!("{ms}-{n}.{ext}");
     std::fs::write(images_dir(app)?.join(&name), bytes).map_err(err)?;
+    ocr::queue(app, &name); // read its text in the background, for search
     Ok(name)
 }
 
@@ -512,11 +533,16 @@ fn find_unused_images(app: AppHandle) -> CmdResult<UnusedImages> {
 fn delete_unused_images(app: AppHandle) -> CmdResult<UnusedImages> {
     let files = unused_image_files(&app)?;
     let mut done = UnusedImages { count: 0, bytes: 0 };
+    let mut removed = Vec::new();
     for (path, size) in files {
         if std::fs::remove_file(&path).is_ok() {
             done.count += 1;
             done.bytes += size;
+            removed.extend(path.file_name().map(|n| n.to_string_lossy().into_owned()));
         }
+    }
+    if let Ok(conn) = app.state::<Db>().0.lock() {
+        let _ = db::forget_image_text(&conn, &removed);
     }
     Ok(done)
 }
@@ -606,6 +632,7 @@ async fn backup_now(app: AppHandle) -> CmdResult<backup::BackupStatus> {
 #[tauri::command]
 async fn restore_backup(app: AppHandle, name: String) -> CmdResult<backup::BackupStatus> {
     backup::restore(&app, &name)?;
+    ocr::scan(&app); // restored screenshots that haven't been read yet
     backup::status(&app)
 }
 
@@ -774,6 +801,7 @@ fn run_gui_action(app: &AppHandle, action: cli::GuiAction) {
         }
         cli::GuiAction::Capture => show_capture(app, None),
         cli::GuiAction::CaptureSelection => capture_selection(app),
+        cli::GuiAction::SearchSelection => search_selection(app),
     }
 }
 
@@ -795,6 +823,42 @@ fn capture_selection(app: &AppHandle) {
         let handle = app.clone();
         let _ = app.run_on_main_thread(move || show_capture(&handle, text));
     });
+}
+
+/// Copies the text selected in the app in front, then opens quick search looking for it, so
+/// an error message you're staring at finds the note about it. With nothing selected it just
+/// opens quick search.
+fn search_selection(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let query = selection::copy_selection().map(|t| selection_query(&t)).filter(|q| !q.is_empty());
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if let Some(q) = query {
+                set_pending(&handle, "search", q);
+            }
+            show_spotlight(&handle);
+        });
+    });
+}
+
+/// Selected text as a search: one line, at most ~150 characters (whole words), so a pasted
+/// stack trace or log excerpt still makes a usable query.
+fn selection_query(text: &str) -> String {
+    const MAX: usize = 150;
+    let mut out = String::new();
+    for word in text.split_whitespace() {
+        if out.is_empty() {
+            // Even a single enormous "word" (e.g. a minified line) is cut to size.
+            out = word.chars().take(MAX).collect();
+        } else if out.len() + 1 + word.len() <= MAX {
+            out.push(' ');
+            out.push_str(word);
+        } else {
+            break;
+        }
+    }
+    out
 }
 
 fn toggle_spotlight(app: &AppHandle) {
@@ -886,6 +950,7 @@ pub fn run() {
                         Some(Global::Capture) => toggle_capture(app),
                         Some(Global::CaptureSelection) => capture_selection(app),
                         Some(Global::Spotlight) => toggle_spotlight(app),
+                        Some(Global::SpotlightSelection) => search_selection(app),
                         None => {}
                     }
                 })
@@ -935,6 +1000,9 @@ pub fn run() {
             // Entries trashed more than 30 days ago are deleted for good.
             let _ = db::purge_expired_trash(&conn);
             app.manage(Db(Mutex::new(conn)));
+
+            // Reads the text in screenshots (in the background) so search finds it.
+            ocr::start(app.handle());
 
             // Daily automatic backups
             app.manage(backup::BackupState::default());
@@ -1002,6 +1070,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             list_entries,
+            search_any,
             get_entry,
             create_entry,
             update_entry,
@@ -1080,6 +1149,18 @@ mod tests {
         // New shortcuts get their defaults.
         assert_eq!(s.spotlight, "Ctrl+Alt+Space");
         assert_eq!(s.capture_selection, "Ctrl+Shift+D");
+        assert_eq!(s.spotlight_selection, "Ctrl+Alt+Shift+Space");
+    }
+
+    #[test]
+    fn selection_becomes_a_one_line_query() {
+        assert_eq!(selection_query("  Error 0x80070005:
+  Access is denied.
+"), "Error 0x80070005: Access is denied.");
+        let long = "word ".repeat(100);
+        let q = selection_query(&long);
+        assert!(q.len() <= 150 && q.ends_with("word"));
+        assert_eq!(selection_query(&"x".repeat(400)).len(), 150);
     }
 
     #[test]
