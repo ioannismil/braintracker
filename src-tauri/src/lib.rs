@@ -1007,6 +1007,14 @@ fn show_spotlight(app: &AppHandle) {
     let _ = app.emit_to(SPOTLIGHT, "spotlight-shown", ());
 }
 
+/// Opens (and if needed creates or upgrades) the database in the data folder: the same
+/// folder app_data_dir() gives, or `data` beside the exe in portable mode.
+fn open_database() -> Result<rusqlite::Connection, String> {
+    let dir = standalone_data_dir().ok_or("can’t find the data folder")?;
+    std::fs::create_dir_all(&dir).map_err(err)?;
+    db::open(&dir.join("braintracker.db")).map_err(err)
+}
+
 /// Entry point of the `bt` console program (src/bin/bt.rs).
 pub fn console_main() -> i32 {
     cli::console_main()
@@ -1034,7 +1042,19 @@ pub fn run() {
         std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", webview);
     }
 
+    // The database is opened before the app starts, not in setup(): Tauri creates the
+    // windows before setup() runs, and a window can ask for its data (e.g. "is offline mode
+    // on?") as soon as it loads. Opening it here means it's there for the very first request.
+    let db = match open_database() {
+        Ok(conn) => Db(Mutex::new(conn)),
+        Err(e) => {
+            cli::print_err(&format!("can’t open your notes: {e}"));
+            std::process::exit(1);
+        }
+    };
+
     tauri::Builder::default()
+        .manage(db)
         // Must be first: a second launch hands its command-line options to the running
         // instance (or, with none, just brings it to the front) and exits.
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
@@ -1097,10 +1117,8 @@ pub fn run() {
             }
         })
         .setup(|app| {
-            // Database
-            let dir = data_dir(app.handle())?;
-            std::fs::create_dir_all(&dir)?;
-            let conn = db::open(&dir.join("braintracker.db"))?;
+            let db = app.state::<Db>();
+            let conn = db.0.lock().map_err(|e| e.to_string())?;
 
             // Turn on "run at startup" the first time the installed app runs.
             // (Skipped in dev builds so the debug exe never registers itself, and in
@@ -1115,7 +1133,7 @@ pub fn run() {
             let config = load_shortcuts(db::get_setting(&conn, "shortcuts")?.as_deref());
             // Entries trashed more than 30 days ago are deleted for good.
             let _ = db::purge_expired_trash(&conn);
-            app.manage(Db(Mutex::new(conn)));
+            drop(conn);
 
             // Reads the text in screenshots (in the background) so search finds it.
             ocr::start(app.handle());

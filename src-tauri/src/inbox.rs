@@ -56,7 +56,7 @@ pub struct InboxStatus {
 }
 
 pub fn load_config(app: &AppHandle) -> InboxConfig {
-    let db = app.state::<Db>();
+    let Some(db) = app.try_state::<Db>() else { return InboxConfig::default() };
     let Ok(conn) = db.0.lock() else { return InboxConfig::default() };
     db::get_setting(&conn, SETTING)
         .ok()
@@ -69,7 +69,7 @@ pub fn save_config(app: &AppHandle, cfg: &InboxConfig) -> Result<(), String> {
     if cfg.enabled {
         std::fs::create_dir_all(inbox_dir(app, cfg)?).map_err(|e| format!("Can’t use that folder: {e}"))?;
     }
-    let db = app.state::<Db>();
+    let db = app.try_state::<Db>().ok_or("BrainTracker is still starting")?;
     let conn = db.0.lock().map_err(err)?;
     db::set_setting(&conn, SETTING, &serde_json::to_string(cfg).map_err(err)?).map_err(err)
 }
@@ -84,7 +84,7 @@ pub fn inbox_dir(app: &AppHandle, cfg: &InboxConfig) -> Result<PathBuf, String> 
 pub fn status(app: &AppHandle) -> Result<InboxStatus, String> {
     let config = load_config(app);
     let dir = inbox_dir(app, &config)?.display().to_string();
-    let state = app.state::<InboxState>();
+    let state = app.try_state::<InboxState>().ok_or("BrainTracker is still starting")?;
     let r = state.report.lock().map_err(err)?;
     Ok(InboxStatus {
         config,
@@ -125,7 +125,7 @@ fn ignorable(name: &str) -> bool {
 }
 
 fn check(app: &AppHandle, cfg: &InboxConfig, settled: Duration) -> Result<usize, String> {
-    let state = app.state::<InboxState>();
+    let state = app.try_state::<InboxState>().ok_or("BrainTracker is still starting")?;
     let _one = state.running.lock().map_err(err)?;
     let result = import_ready(app, cfg, settled, &state);
     if let Ok(mut r) = state.report.lock() {

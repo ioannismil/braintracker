@@ -8,14 +8,15 @@ use tauri::{AppHandle, Manager};
 const OFFLINE: &str = "offline";
 const PLACEHOLDERS: &str = "placeholders";
 
+// try_state, not state: these must never panic (a panic here aborts the whole app).
 fn get(app: &AppHandle, key: &str) -> Option<String> {
-    let db = app.state::<Db>();
+    let db = app.try_state::<Db>()?;
     let conn = db.0.lock().ok()?;
     db::get_setting(&conn, key).ok().flatten()
 }
 
 fn set(app: &AppHandle, key: &str, value: &str) -> Result<(), String> {
-    let db = app.state::<Db>();
+    let db = app.try_state::<Db>().ok_or("BrainTracker is still starting")?;
     let conn = db.0.lock().map_err(err)?;
     db::set_setting(&conn, key, value).map_err(err)
 }
