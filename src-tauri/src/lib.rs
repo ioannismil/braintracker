@@ -1,4 +1,5 @@
 mod backup;
+mod cli;
 mod db;
 mod import;
 mod selection;
@@ -257,6 +258,24 @@ fn portable_dir() -> Option<&'static PathBuf> {
         exe_dir.join("portable.txt").exists().then(|| exe_dir.join("data"))
     })
     .as_ref()
+}
+
+/// The data folder without a running app (for the `bt` command line): the same place Tauri's
+/// app_data_dir() uses — %APPDATA%, ~/.local/share or ~/Library/Application Support.
+pub(crate) fn standalone_data_dir() -> Option<PathBuf> {
+    if let Some(d) = portable_dir() {
+        return Some(d.clone());
+    }
+    const ID: &str = "com.braintracker.app";
+    let env = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);
+    let base = if cfg!(windows) {
+        env("APPDATA")?
+    } else if cfg!(target_os = "macos") {
+        env("HOME")?.join("Library/Application Support")
+    } else {
+        env("XDG_DATA_HOME").or_else(|| env("HOME").map(|h| h.join(".local/share")))?
+    };
+    Some(base.join(ID))
 }
 
 fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -704,15 +723,57 @@ fn toggle_main(app: &AppHandle) {
     }
 }
 
+/// Things waiting for a window to pick up: "selection" (text for quick capture's notes),
+/// "search" (a query for quick search) and "open" (an entry id for the main window).
+/// Held here rather than only sent in an event so nothing is lost while a window is still
+/// loading, e.g. on a first launch with `bt add --open --selection`.
+#[derive(Default)]
+struct Pending(Mutex<std::collections::HashMap<&'static str, String>>);
+
+fn set_pending(app: &AppHandle, key: &'static str, value: String) {
+    if let Ok(mut p) = app.state::<Pending>().0.lock() {
+        p.insert(key, value);
+    }
+}
+
+/// Windows call this when shown (and when they first load) to collect what's waiting for them.
+#[tauri::command]
+fn take_pending(pending: State<Pending>, key: String) -> Option<String> {
+    pending.0.lock().ok()?.remove(key.as_str())
+}
+
 /// Shows the quick-capture popup; `selection` is text to add to the end of its notes.
 fn show_capture(app: &AppHandle, selection: Option<String>) {
+    if let Some(text) = selection {
+        set_pending(app, "selection", text);
+    }
     if let Some(w) = app.get_webview_window(CAPTURE) {
         if !w.is_visible().unwrap_or(false) {
             let _ = w.center();
         }
         let _ = w.show();
         let _ = w.set_focus();
-        let _ = app.emit_to(CAPTURE, "capture-shown", selection);
+        let _ = app.emit_to(CAPTURE, "capture-shown", ());
+    }
+}
+
+/// Does what `--open` on the command line asked for (see `cli.rs`).
+fn run_gui_action(app: &AppHandle, action: cli::GuiAction) {
+    match action {
+        cli::GuiAction::Show => show_main(app),
+        cli::GuiAction::OpenEntry(id) => {
+            set_pending(app, "open", id.to_string());
+            show_main(app);
+            let _ = app.emit_to(MAIN, "pending-open", ());
+        }
+        cli::GuiAction::Search(query) => {
+            if let Some(q) = query {
+                set_pending(app, "search", q);
+            }
+            show_spotlight(app);
+        }
+        cli::GuiAction::Capture => show_capture(app, None),
+        cli::GuiAction::CaptureSelection => capture_selection(app),
     }
 }
 
@@ -736,12 +797,22 @@ fn capture_selection(app: &AppHandle) {
     });
 }
 
+fn toggle_spotlight(app: &AppHandle) {
+    match app.get_webview_window(SPOTLIGHT) {
+        Some(w) if w.is_visible().unwrap_or(false) => {
+            let _ = w.hide();
+        }
+        _ => show_spotlight(app),
+    }
+}
+
 /// Shows quick search centred horizontally, a little above the middle of the screen
 /// (like Spotlight), so the bar stays put while the results grow below it.
-fn toggle_spotlight(app: &AppHandle) {
+fn show_spotlight(app: &AppHandle) {
     let Some(w) = app.get_webview_window(SPOTLIGHT) else { return };
     if w.is_visible().unwrap_or(false) {
-        let _ = w.hide();
+        let _ = w.set_focus();
+        let _ = app.emit_to(SPOTLIGHT, "spotlight-shown", ());
         return;
     }
     let _ = w.center();
@@ -756,8 +827,26 @@ fn toggle_spotlight(app: &AppHandle) {
     let _ = app.emit_to(SPOTLIGHT, "spotlight-shown", ());
 }
 
+/// Entry point of the `bt` console program (src/bin/bt.rs).
+pub fn console_main() -> i32 {
+    cli::console_main()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Commands like `braintracker search docker` run in the terminal and exit; only a plain
+    // launch or `--open` starts the app.
+    let args: Vec<String> = std::env::args().collect();
+    let gui_action = match cli::parse(&args) {
+        cli::Parsed::Info(text) => return cli::print_out(&text),
+        cli::Parsed::Error(e) => {
+            cli::print_err(&e);
+            std::process::exit(2);
+        }
+        cli::Parsed::Headless(cmd, json) => std::process::exit(cli::execute(cmd, json)),
+        cli::Parsed::Gui(action) => action,
+    };
+
     // Portable mode also keeps WebView2's cache beside the exe instead of in %LOCALAPPDATA%.
     if let Some(dir) = portable_dir() {
         let webview = dir.join("webview");
@@ -766,9 +855,13 @@ pub fn run() {
     }
 
     tauri::Builder::default()
-        // Must be first: a second launch just focuses the running instance.
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            show_main(app)
+        // Must be first: a second launch hands its command-line options to the running
+        // instance (or, with none, just brings it to the front) and exits.
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            match cli::parse(&args) {
+                cli::Parsed::Gui(Some(action)) => run_gui_action(app, action),
+                _ => show_main(app),
+            }
         }))
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
@@ -855,6 +948,7 @@ pub fn run() {
             let mut hotkeys = Hotkeys { config, ..Default::default() };
             register_globals(app.handle(), &mut hotkeys);
             app.manage(HotkeyState(Mutex::new(hotkeys)));
+            app.manage(Pending::default());
 
             // System tray
             let capture_i = MenuItem::with_id(app, "capture", "Quick capture", true, None::<&str>)?;
@@ -886,8 +980,10 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // Launched at login → stay quietly in the tray.
-            if !std::env::args().any(|a| a == "--minimized") {
+            // `bt search --open` etc. opens just that; launched at login → stay quietly in the tray.
+            if let Some(action) = gui_action {
+                run_gui_action(app.handle(), action);
+            } else if !std::env::args().any(|a| a == "--minimized") {
                 show_main(app.handle());
             }
             Ok(())
@@ -929,6 +1025,7 @@ pub fn run() {
             capture_done,
             capture_saved,
             hide_spotlight,
+            take_pending,
             spotlight_open,
             get_shortcuts,
             set_shortcuts,

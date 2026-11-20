@@ -132,6 +132,8 @@ pub struct TagCount {
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     let conn = Connection::open(path)?;
+    // The app and the `bt` command line can both have the database open: wait for each other.
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
     init(&conn)?;
     Ok(conn)
 }
@@ -169,6 +171,11 @@ fn normalize_tag(t: &str) -> String {
         .collect::<Vec<_>>()
         .join("-")
         .replace(',', "")
+}
+
+/// "Docker, How To" (as typed on the command line) -> ["docker", "how-to"]
+pub fn parse_tags_arg(text: &str) -> Vec<String> {
+    text.split(',').map(normalize_tag).filter(|t| !t.is_empty()).collect()
 }
 
 /// "Rust, How To ,rust" -> ",rust,how-to,"

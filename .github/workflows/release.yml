@@ -84,6 +84,8 @@ jobs:
           $stage = "portable/BrainTracker"
           New-Item -ItemType Directory -Force $stage | Out-Null
           Copy-Item "src-tauri/target/release/braintracker.exe" "$stage/BrainTracker.exe"
+          # bt.exe, the console command line (tauri build bundles it into the installer by itself)
+          Copy-Item "src-tauri/target/release/bt.exe" "$stage/bt.exe"
           @(
             "BrainTracker portable"
             ""

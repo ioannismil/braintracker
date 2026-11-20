@@ -127,6 +127,11 @@ export const api = {
     invoke<Entry>("create_entry", { title: title ?? null, body: body ?? null, tags: tags ?? null }),
   hideCapture: () => invoke<void>("hide_capture"),
   captureSaved: () => invoke<void>("capture_saved"),
+  /**
+   * Something waiting for this window (taken once): "selection" (text for quick capture's notes),
+   * "search" (a query for quick search) or "open" (an entry id for the main window).
+   */
+  takePending: (key: "selection" | "search" | "open") => invoke<string | null>("take_pending", { key }),
   captureDone: (openId: number | null, openMain = false) =>
     invoke<void>("capture_done", { openId, openMain }),
   hideSpotlight: () => invoke<void>("hide_spotlight"),

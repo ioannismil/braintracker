@@ -48,14 +48,18 @@ export default function Spotlight() {
 
   // Every time the popup is summoned: back to the list, fresh results, query selected.
   useEffect(() => {
-    const onShown = () => {
+    const onShown = async () => {
       setOpen(null);
-      search(inputRef.current?.value ?? "");
+      // `bt search <words> --open` hands over a query to start with.
+      const q = await api.takePending("search").catch(() => null);
+      if (q !== null) setQuery(q);
+      else search(inputRef.current?.value ?? "");
       setTimeout(() => {
         inputRef.current?.focus();
         inputRef.current?.select();
       }, 0);
     };
+    onShown();
     const un = listen("spotlight-shown", onShown);
     const onFocus = () => inputRef.current?.focus();
     window.addEventListener("focus", onFocus);

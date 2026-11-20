@@ -47,13 +47,14 @@ export default function Capture() {
   }, [saved]);
 
   useEffect(() => {
-    /** `selection` is text copied from the app you were in (capture-selection shortcut). */
-    const onShown = (selection?: string | null) => {
+    const onShown = () => {
       setError("");
       setSaved("");
-      if (selection) setBody((b) => (b.trim() ? `${b.trimEnd()}
-
-${selection}` : selection));
+      // Text selected in the app you were in (capture-selection shortcut or --capture-selection).
+      api
+        .takePending("selection")
+        .then((sel) => sel && setBody((b) => (b.trim() ? `${b.trimEnd()}\n\n${sel}` : sel)))
+        .catch(() => {});
       api.listTags().then(setTags).catch(() => {});
       setTimeout(() => {
         titleRef.current?.focus();
@@ -61,7 +62,7 @@ ${selection}` : selection));
       }, 0);
     };
     onShown();
-    const un = listen<string | null>("capture-shown", (e) => onShown(e.payload));
+    const un = listen("capture-shown", onShown);
     return () => {
       un.then((f) => f());
     };

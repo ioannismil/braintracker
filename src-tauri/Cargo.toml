@@ -3,6 +3,7 @@ name = "braintracker"
 version = "0.1.0"
 description = "A personal log of what you did and how you did it"
 edition = "2021"
+default-run = "braintracker"
 license = "MIT"
 repository = "https://github.com/ioannismil/braintracker"
 
@@ -27,7 +28,7 @@ tauri-plugin-updater = "2.14.1"
 
 [target.'cfg(windows)'.dependencies]
 arboard = "3"
-windows-sys = { version = "0.61", features = ["Win32_System_DataExchange", "Win32_UI_Input_KeyboardAndMouse"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_DataExchange", "Win32_UI_Input_KeyboardAndMouse"] }
 
 [profile.release]
 codegen-units = 1

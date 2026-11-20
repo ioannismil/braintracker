@@ -263,11 +263,24 @@ export default function App() {
   useEffect(() => {
     const onBlur = () => flush();
     window.addEventListener("blur", onBlur);
+    // Notes may have been changed from the `bt` command line while the window was in the background.
+    const onFocus = () => refresh();
+    window.addEventListener("focus", onFocus);
+    const openPending = () =>
+      api
+        .takePending("open")
+        .then((id) => {
+          if (id) openRef.current(Number(id), true);
+        })
+        .catch(() => {});
+    openPending();
     const unlisteners = [
       listen("summoned", () => focusSearch()),
       // Something was saved from the quick-capture popup
       listen("entries-changed", () => refresh()),
       listen<number>("open-entry", (e) => openRef.current(e.payload, true)),
+      // `bt show <id> --open`
+      listen("pending-open", () => openPending()),
       // A backup was restored: drop the open entry (it may no longer exist) without saving it.
       listen("data-restored", () => {
         if (saveTimer.current) window.clearTimeout(saveTimer.current);
@@ -280,6 +293,7 @@ export default function App() {
     const clock = window.setInterval(() => tick((n) => n + 1), 30_000);
     return () => {
       window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
       unlisteners.forEach((u) => u.then((f) => f()));
       window.clearInterval(clock);
     };

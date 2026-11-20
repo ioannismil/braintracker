@@ -4,10 +4,10 @@
 
 # BrainTracker
 
-**Remember what you did — and exactly how you did it.**
+**For the things you'll forget — and need again someday.**
 
-A tiny, fast, offline-first Windows app for logging your work: the fix, the command,<br/>
-the setting you changed, the screenshot that explains it. Find any of it again in seconds.
+A tiny, fast, offline-first Windows app for jotting down what you just did: the fix, the command,<br/>
+the setting you changed, the screenshot that explains it. Write it in seconds, find it again in seconds.
 
 [![Latest release](https://img.shields.io/github/v/release/ioannismil/braintracker?style=flat-square&color=d9603b&label=latest)](https://github.com/ioannismil/braintracker/releases/latest)
 [![Release build](https://img.shields.io/github/actions/workflow/status/ioannismil/braintracker/release.yml?branch=main&style=flat-square&label=build)](https://github.com/ioannismil/braintracker/actions/workflows/release.yml)
@@ -16,11 +16,19 @@ the setting you changed, the screenshot that explains it. Find any of it again i
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-24c8db?style=flat-square&logo=tauri&logoColor=white)](https://tauri.app)
 [![License: MIT](https://img.shields.io/badge/license-MIT-6b5f56?style=flat-square)](LICENSE)
 
-[**Download**](#-download) · [Features](#-features) · [Shortcuts](#%EF%B8%8F-keyboard-shortcuts) · [Your data](#-your-data) · [Build from source](#%EF%B8%8F-build-from-source)
+[**Download**](#-download) · [Features](#-features) · [Shortcuts](#%EF%B8%8F-keyboard-shortcuts) · [Command line](#-command-line) · [Your data](#-your-data) · [Build from source](#%EF%B8%8F-build-from-source)
 
 </div>
 
 ---
+
+## 🧠 What it is, and what it isn't
+
+You fix something tricky, and six months later it breaks again. You remember fixing it, but not *how*. BrainTracker is for that moment: a place to drop the details you'd otherwise forget, so you never have to work them out twice.
+
+It's deliberately **not** a knowledge base or a "second brain". Apps like Obsidian or Notion are great for building connected notes you organise and come back to on purpose. BrainTracker asks for none of that: no folders, no links between notes, no structure to keep up. You write a few lines while it's fresh, add a tag if you feel like it, and move on. When you need it later, you search and it's there.
+
+Think of it as a memory you can search, not a library you keep tidy.
 
 ## ✨ Features
 
@@ -152,6 +160,39 @@ Example: `vpn tag:home after:2026-01 has:code`
 | Editor | <kbd>Tab</kbd> indents · <kbd>Ctrl</kbd>+<kbd>V</kbd> pastes screenshots · double-click the preview to edit |
 
 </details>
+
+## 💻 Command line
+
+Everything works from the terminal too — straight on your notes, without opening a window — so you can script it. On Windows use **`bt`**, installed next to BrainTracker (on Linux/macOS, `braintracker` works the same).
+
+```powershell
+bt search docker dns                 # find notes (filters work: tag:wsl has:code after:2026-10)
+bt list --tag docker                 # recent notes
+bt show 12                           # print a note in full
+bt add "Fixed DNS in WSL" --tags wsl,network --body "Set nameserver 1.1.1.1"
+git log -1 | bt add "Today's release" --body -      # - reads the text from stdin
+bt edit 12 --append "Also needed a restart"
+bt pin 12 · bt unpin 12 · bt delete 12 · bt tags
+bt list --json                       # machine-readable output for scripts
+```
+
+Add **`--open`** to do it in the app instead:
+
+| Command | Opens |
+|---|---|
+| `bt --open` | BrainTracker |
+| `bt search [words] --open` | Quick search (with those words typed in) |
+| `bt add --open` | Quick capture |
+| `bt add --open --selection` | Quick capture with the text selected in the app in front |
+| `bt show 12 --open` | Note #12 in BrainTracker |
+
+That makes them easy to bind to a desktop shortcut, a launcher, or your desktop's own keyboard settings. `bt --help` lists everything.
+
+To type just `bt` in any terminal, add BrainTracker's folder to your PATH once (PowerShell):
+
+```powershell
+[Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path", "User") + ";$env:LOCALAPPDATA\BrainTracker", "User")
+```
 
 ## 💾 Your data
 
