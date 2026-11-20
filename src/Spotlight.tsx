@@ -129,6 +129,11 @@ export default function Spotlight() {
   };
 
   const openInApp = (id: number | null) => api.spotlightOpen(id);
+  const popOut = (id: number | null) => {
+    if (id === null) return;
+    api.popOut(id).catch((e) => setError(String(e)));
+    api.hideSpotlight();
+  };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.nativeEvent.isComposing) return;
@@ -144,6 +149,7 @@ export default function Spotlight() {
     else if (e.key === "Enter" && (e.ctrlKey || open)) run(() => openInApp(open?.id ?? current?.id ?? null));
     else if (e.key === "Enter") run(() => current && expand(current.id));
     else if (e.code === "KeyO" && e.ctrlKey) run(() => openInApp(open?.id ?? current?.id ?? null));
+    else if (e.code === "KeyP" && e.ctrlKey) run(() => popOut(open?.id ?? current?.id ?? null));
     else if (e.key === "Escape")
       run(() => {
         if (open) setOpen(null);
@@ -201,11 +207,17 @@ export default function Spotlight() {
           />
           <footer className="spot-foot">
             <span>
-              <kbd>↑</kbd> <kbd>↓</kbd> next note · <kbd>Enter</kbd> edit in BrainTracker · <kbd>Esc</kbd> back
+              <kbd>↑</kbd> <kbd>↓</kbd> next note · <kbd>Enter</kbd> edit · <kbd>Ctrl</kbd>+<kbd>P</kbd> pop out ·{" "}
+              <kbd>Esc</kbd> back
             </span>
-            <button className="primary small" onClick={() => openInApp(open.id)}>
-              Open in BrainTracker ↗
-            </button>
+            <span className="spot-actions">
+              <button className="tool" onClick={() => popOut(open.id)} title="Keep it open on top while you work (Ctrl+P)">
+                ⧉ Pop out
+              </button>
+              <button className="primary small" onClick={() => openInApp(open.id)}>
+                Open in BrainTracker ↗
+              </button>
+            </span>
           </footer>
         </div>
       ) : (

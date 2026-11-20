@@ -2,7 +2,9 @@ mod backup;
 mod cli;
 mod db;
 mod import;
+mod inbox;
 mod ocr;
+mod prefs;
 mod selection;
 mod updates;
 
@@ -24,6 +26,8 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 const MAIN: &str = "main";
 const CAPTURE: &str = "capture";
 const SPOTLIGHT: &str = "spotlight";
+/// Pop-out note windows are labelled `note-<id>`.
+const NOTE_PREFIX: &str = "note-";
 
 type CmdResult<T> = Result<T, String>;
 
@@ -366,14 +370,19 @@ fn create_entry(
 
 #[tauri::command]
 fn update_entry(
+    app: AppHandle,
     db: State<Db>,
     id: i64,
     title: String,
     body: String,
     tags: Vec<String>,
 ) -> CmdResult<Option<Entry>> {
-    let conn = db.0.lock().map_err(err)?;
-    db::update_entry(&conn, id, &title, &body, &tags).map_err(err)
+    let saved = {
+        let conn = db.0.lock().map_err(err)?;
+        db::update_entry(&conn, id, &title, &body, &tags).map_err(err)?
+    };
+    let _ = app.emit("entry-updated", id); // popped-out copies refresh
+    Ok(saved)
 }
 
 #[tauri::command]
@@ -449,9 +458,13 @@ fn get_version(db: State<Db>, id: i64) -> CmdResult<Option<db::Version>> {
 }
 
 #[tauri::command]
-fn restore_version(db: State<Db>, entry_id: i64, version_id: i64) -> CmdResult<Option<Entry>> {
-    let conn = db.0.lock().map_err(err)?;
-    db::restore_version(&conn, entry_id, version_id).map_err(err)
+fn restore_version(app: AppHandle, db: State<Db>, entry_id: i64, version_id: i64) -> CmdResult<Option<Entry>> {
+    let restored = {
+        let conn = db.0.lock().map_err(err)?;
+        db::restore_version(&conn, entry_id, version_id).map_err(err)?
+    };
+    let _ = app.emit("entry-updated", entry_id);
+    Ok(restored)
 }
 
 // ---------- import ----------
@@ -724,6 +737,109 @@ fn export_markdown(app: AppHandle, db: State<Db>) -> CmdResult<String> {
         std::fs::write(file, content).map_err(err)?;
     }
     Ok(dir.display().to_string())
+}
+
+// ---------- offline mode, command placeholders ----------
+
+#[tauri::command]
+fn get_offline(app: AppHandle) -> bool {
+    prefs::is_offline(&app)
+}
+
+#[tauri::command]
+fn set_offline(app: AppHandle, enabled: bool) -> CmdResult<bool> {
+    prefs::set_offline(&app, enabled)?;
+    let _ = app.emit("offline-changed", enabled);
+    Ok(enabled)
+}
+
+#[tauri::command]
+fn get_placeholders(app: AppHandle) -> prefs::PlaceholderConfig {
+    prefs::placeholders(&app)
+}
+
+#[tauri::command]
+fn set_placeholders(app: AppHandle, config: prefs::PlaceholderConfig) -> CmdResult<prefs::PlaceholderConfig> {
+    prefs::set_placeholders(&app, config)
+}
+
+#[tauri::command]
+fn remember_placeholders(app: AppHandle, values: std::collections::HashMap<String, String>) -> CmdResult<()> {
+    prefs::remember(&app, values)
+}
+
+// ---------- inbox folder ----------
+
+#[tauri::command]
+fn inbox_status(app: AppHandle) -> CmdResult<inbox::InboxStatus> {
+    inbox::status(&app)
+}
+
+#[tauri::command]
+fn set_inbox_config(app: AppHandle, config: inbox::InboxConfig) -> CmdResult<inbox::InboxStatus> {
+    inbox::save_config(&app, &config)?;
+    inbox::status(&app)
+}
+
+// async → off the UI thread: importing can copy images.
+#[tauri::command]
+async fn inbox_check_now(app: AppHandle) -> CmdResult<inbox::InboxStatus> {
+    let _ = inbox::check_now(&app); // the outcome is in the status
+    inbox::status(&app)
+}
+
+#[tauri::command]
+fn inbox_dir_path(app: AppHandle) -> CmdResult<String> {
+    let dir = inbox::inbox_dir(&app, &inbox::load_config(&app))?;
+    std::fs::create_dir_all(&dir).map_err(err)?;
+    Ok(dir.display().to_string())
+}
+
+// ---------- pop-out notes ----------
+
+/// Opens a note in its own small window that stays on top of other apps, e.g. to follow
+/// the steps while you work. One window per note; asking again brings it to the front.
+/// (async: creating a window from a synchronous command can deadlock on Windows.)
+#[tauri::command]
+async fn pop_out(app: AppHandle, id: i64) -> CmdResult<()> {
+    let label = format!("{NOTE_PREFIX}{id}");
+    if let Some(w) = app.get_webview_window(&label) {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+        return Ok(());
+    }
+    let title = {
+        let db = app.state::<Db>();
+        let conn = db.0.lock().map_err(err)?;
+        db::get_entry(&conn, id).map_err(err)?.ok_or("That note no longer exists")?.title
+    };
+    let (w, h) = (440.0, 560.0);
+    let mut builder = tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App(format!("note.html?id={id}").into()))
+        .title(if title.trim().is_empty() { "Untitled" } else { title.trim() })
+        .inner_size(w, h)
+        .min_inner_size(280.0, 180.0)
+        .always_on_top(true)
+        .focused(true);
+    // Top-right of the main window's screen, each further pop-out a little lower-left.
+    let monitor = app.get_webview_window(MAIN).and_then(|m| m.current_monitor().ok().flatten());
+    if let Some(m) = monitor.or_else(|| app.primary_monitor().ok().flatten()) {
+        let scale = m.scale_factor();
+        let (pos, size) = (m.position().to_logical::<f64>(scale), m.size().to_logical::<f64>(scale));
+        let others = app.webview_windows().keys().filter(|l| l.starts_with(NOTE_PREFIX)).count() as f64;
+        let x = pos.x + size.width - w - 32.0 - others * 28.0;
+        let y = pos.y + 64.0 + others * 28.0;
+        builder = builder.position(x.max(pos.x), y);
+    }
+    builder.build().map_err(err)?;
+    Ok(())
+}
+
+/// From a popped-out note: open it for editing in the main window.
+#[tauri::command]
+fn open_in_main(app: AppHandle, id: i64) {
+    show_main(&app);
+    let _ = app.emit_to(MAIN, "open-entry", id);
 }
 
 // ---------- window helpers ----------
@@ -1004,6 +1120,9 @@ pub fn run() {
             // Reads the text in screenshots (in the background) so search finds it.
             ocr::start(app.handle());
 
+            // Notes dropped into the inbox folder are imported automatically.
+            inbox::start(app.handle().clone());
+
             // Daily automatic backups
             app.manage(backup::BackupState::default());
             backup::start_scheduler(app.handle().clone());
@@ -1057,8 +1176,9 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| match event {
-            // Closing any window hides it to the tray instead of quitting.
-            WindowEvent::CloseRequested { api, .. } => {
+            // Closing the app's own windows hides them to the tray instead of quitting
+            // (popped-out notes really close).
+            WindowEvent::CloseRequested { api, .. } if !window.label().starts_with(NOTE_PREFIX) => {
                 api.prevent_close();
                 let _ = window.hide();
             }
@@ -1107,6 +1227,17 @@ pub fn run() {
             check_for_update,
             install_update,
             app_info,
+            get_offline,
+            set_offline,
+            get_placeholders,
+            set_placeholders,
+            remember_placeholders,
+            inbox_status,
+            set_inbox_config,
+            inbox_check_now,
+            inbox_dir_path,
+            pop_out,
+            open_in_main,
             get_autostart,
             set_autostart,
             export_markdown

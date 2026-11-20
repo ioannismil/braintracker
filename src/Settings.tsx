@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { api, updateApi, type AppInfo, type UpdateInfo } from "./api";
+import { api, prefsApi, updateApi, type AppInfo, type UpdateInfo } from "./api";
 import Backups from "./Backups";
 import DataTools from "./DataTools";
+import Inbox from "./Inbox";
+import Placeholders from "./Placeholders";
 import UpdateBanner from "./UpdateBanner";
 import {
   ACTIONS,
@@ -33,11 +35,12 @@ interface Props {
   initialTab?: SettingsTab;
 }
 
-export type SettingsTab = "general" | "shortcuts";
+export type SettingsTab = "general" | "shortcuts" | "commands";
 
 const TABS: { id: SettingsTab; label: string }[] = [
   { id: "general", label: "General" },
   { id: "shortcuts", label: "Keyboard shortcuts" },
+  { id: "commands", label: "Commands" },
 ];
 
 export default function Settings({ info, onChange, onClose, onUpdateFound, beforeInstall, initialTab = "general" }: Props) {
@@ -61,6 +64,7 @@ export default function Settings({ info, onChange, onClose, onUpdateFound, befor
     }
   };
   const [autostart, setAutostart] = useState<boolean | null>(null);
+  const [offline, setOffline] = useState<boolean | null>(null);
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [msg, setMsg] = useState("");
   const [recording, setRecording] = useState<ShortcutAction | null>(null);
@@ -70,6 +74,7 @@ export default function Settings({ info, onChange, onClose, onUpdateFound, befor
 
   useEffect(() => {
     api.getAutostart().then(setAutostart).catch(() => setAutostart(false));
+    prefsApi.getOffline().then(setOffline).catch(() => setOffline(false));
     api.appInfo().then(setAppInfo);
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
@@ -136,6 +141,16 @@ export default function Settings({ info, onChange, onClose, onUpdateFound, befor
       setAutostart(await api.setAutostart(!autostart));
     } catch (e) {
       setMsg(`Couldn’t change startup setting: ${e}`);
+    }
+  };
+
+  const toggleOffline = async () => {
+    try {
+      setOffline(await prefsApi.setOffline(!offline));
+      setFound(null);
+      setUpdateMsg("");
+    } catch (e) {
+      setMsg(`Couldn’t change offline mode: ${e}`);
     }
   };
 
@@ -227,6 +242,8 @@ export default function Settings({ info, onChange, onClose, onUpdateFound, befor
           </div>
         )}
 
+        {tab === "commands" && <Placeholders />}
+
         {tab === "general" && (
           <>
             <div className="setting">
@@ -245,16 +262,38 @@ export default function Settings({ info, onChange, onClose, onUpdateFound, befor
               </button>
             </div>
 
+            <div className="setting">
+              <div>
+                <strong>Offline mode</strong>
+                <p>
+                  BrainTracker never connects to the internet: no update checks, and web images in notes aren’t
+                  loaded. Links still open in your browser when you click them.
+                </p>
+              </div>
+              <button
+                className={`switch ${offline ? "on" : ""}`}
+                role="switch"
+                aria-checked={!!offline}
+                aria-label="Offline mode"
+                disabled={offline === null}
+                onClick={toggleOffline}
+              >
+                <span />
+              </button>
+            </div>
+
             <div className="setting block">
               <div className="setting-head">
                 <div>
                   <strong>Updates</strong>
                   <p>
-                    Version {appInfo?.version ?? "…"} · BrainTracker checks for new versions automatically and offers to
-                    install them.
+                    Version {appInfo?.version ?? "…"} ·{" "}
+                    {offline
+                      ? "Update checks are off while offline mode is on."
+                      : "BrainTracker checks for new versions automatically and offers to install them."}
                   </p>
                 </div>
-                <button className="tool" onClick={checkUpdates} disabled={checking}>
+                <button className="tool" onClick={checkUpdates} disabled={checking || !!offline}>
                   {checking ? "Checking…" : "Check now"}
                 </button>
               </div>
@@ -267,6 +306,8 @@ export default function Settings({ info, onChange, onClose, onUpdateFound, befor
             </div>
 
             <Backups />
+
+            <Inbox />
 
             <DataTools />
 

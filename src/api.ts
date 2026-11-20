@@ -112,6 +112,43 @@ export const updateApi = {
   install: () => invoke<void>("install_update"),
 };
 
+export interface InboxConfig {
+  enabled: boolean;
+  dir: string | null;
+}
+
+export interface InboxStatus {
+  config: InboxConfig;
+  dir: string;
+  lastImport: number | null;
+  lastCount: number;
+  lastError: string | null;
+}
+
+export const inboxApi = {
+  status: () => invoke<InboxStatus>("inbox_status"),
+  setConfig: (config: InboxConfig) => invoke<InboxStatus>("set_inbox_config", { config }),
+  checkNow: () => invoke<InboxStatus>("inbox_check_now"),
+  /** The folder (created if needed), for "Open folder". */
+  dirPath: () => invoke<string>("inbox_dir_path"),
+};
+
+export interface PlaceholderConfig {
+  /** Copying a code block with {{blanks}} asks for them first. */
+  ask: boolean;
+  /** Remember typed values to suggest next time (never for names like password or token). */
+  remember: boolean;
+  values: Record<string, string>;
+}
+
+export const prefsApi = {
+  getOffline: () => invoke<boolean>("get_offline"),
+  setOffline: (enabled: boolean) => invoke<boolean>("set_offline", { enabled }),
+  getPlaceholders: () => invoke<PlaceholderConfig>("get_placeholders"),
+  setPlaceholders: (config: PlaceholderConfig) => invoke<PlaceholderConfig>("set_placeholders", { config }),
+  rememberPlaceholders: (values: Record<string, string>) => invoke<void>("remember_placeholders", { values }),
+};
+
 export const backupApi = {
   status: () => invoke<BackupStatus>("backup_status"),
   setConfig: (config: BackupConfig) => invoke<BackupStatus>("set_backup_config", { config }),
@@ -138,6 +175,10 @@ export const api = {
     invoke<void>("capture_done", { openId, openMain }),
   hideSpotlight: () => invoke<void>("hide_spotlight"),
   spotlightOpen: (openId: number | null) => invoke<void>("spotlight_open", { openId }),
+  /** Opens the note in its own small always-on-top window. */
+  popOut: (id: number) => invoke<void>("pop_out", { id }),
+  /** From a popped-out note: edit it in the main window. */
+  openInMain: (id: number) => invoke<void>("open_in_main", { id }),
   updateEntry: (id: number, title: string, body: string, tags: string[]) =>
     invoke<Entry | null>("update_entry", { id, title, body, tags }),
   setPinned: (id: number, pinned: boolean) => invoke<void>("set_pinned", { id, pinned }),

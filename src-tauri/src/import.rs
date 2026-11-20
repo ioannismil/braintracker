@@ -11,9 +11,30 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 use tauri::{AppHandle, Emitter, Manager};
 
-const EXTENSIONS: [&str; 3] = ["md", "markdown", "txt"];
+pub const EXTENSIONS: [&str; 3] = ["md", "markdown", "txt"];
 const MAX_FILES: usize = 5000;
-const IMAGE_EXTS: [&str; 6] = ["png", "jpg", "jpeg", "gif", "webp", "bmp"];
+pub const IMAGE_EXTS: [&str; 6] = ["png", "jpg", "jpeg", "gif", "webp", "bmp"];
+
+/// What happened to one imported file.
+pub enum Outcome {
+    Imported,
+    /// Empty, or already imported before.
+    Skipped,
+}
+
+fn has_ext(path: &Path, exts: &[&str]) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| exts.contains(&e.to_ascii_lowercase().as_str()))
+}
+
+pub fn is_note_file(path: &Path) -> bool {
+    has_ext(path, &EXTENSIONS)
+}
+
+pub fn is_image_file(path: &Path) -> bool {
+    has_ext(path, &IMAGE_EXTS)
+}
 
 #[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -128,17 +149,15 @@ fn collect_files(path: &Path, out: &mut Vec<PathBuf>) {
         for p in entries {
             collect_files(&p, out);
         }
-    } else if path
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
-    {
+    } else if is_note_file(path) {
         out.push(path.to_path_buf());
     }
 }
 
 /// Copies local images referenced as `](relative/path.png)` and rewrites them to `](img:…)`.
-fn import_images(app: &AppHandle, body: &str, base: &Path) -> String {
+/// Also returns the image files it copied in.
+fn import_images(app: &AppHandle, body: &str, base: &Path) -> (String, Vec<PathBuf>) {
+    let mut used = Vec::new();
     let mut out = String::with_capacity(body.len());
     let mut rest = body;
     while let Some(pos) = rest.find("](") {
@@ -157,6 +176,7 @@ fn import_images(app: &AppHandle, body: &str, base: &Path) -> String {
                     out.push_str("img:");
                     out.push_str(&name);
                     replaced = true;
+                    used.push(file);
                 }
             }
         }
@@ -166,7 +186,7 @@ fn import_images(app: &AppHandle, body: &str, base: &Path) -> String {
         rest = &rest[end..];
     }
     out.push_str(rest);
-    out
+    (out, used)
 }
 
 fn modified_ms(path: &Path) -> i64 {
@@ -178,6 +198,64 @@ fn modified_ms(path: &Path) -> i64 {
         .unwrap_or_else(db::now_ms)
 }
 
+/// Imports one Markdown/text file, adding `extra_tags`. Also returns the image files it
+/// copied in (so the inbox can tidy them away too). Err is a reason to show the user.
+pub fn import_file(app: &AppHandle, file: &Path, extra_tags: &[String]) -> Result<(Outcome, Vec<PathBuf>), String> {
+    let text = String::from_utf8_lossy(&std::fs::read(file).map_err(err)?).into_owned();
+    let stem = file.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+    let mut parsed = parse_markdown(&text, &stem);
+    if parsed.title.trim().is_empty() && parsed.body.trim().is_empty() {
+        return Ok((Outcome::Skipped, Vec::new()));
+    }
+    parsed.tags.extend(extra_tags.iter().cloned());
+    let base = file.parent().map(Path::to_path_buf).unwrap_or_default();
+    let (body, images) = import_images(app, &parsed.body, &base);
+    let mtime = modified_ms(file);
+
+    let db = app.state::<Db>();
+    let conn = db.0.lock().map_err(err)?;
+    let created = parsed.created.as_deref().and_then(|s| db::local_to_ms(&conn, s)).unwrap_or(mtime);
+    let updated = parsed
+        .updated
+        .as_deref()
+        .and_then(|s| db::local_to_ms(&conn, s))
+        .unwrap_or(created);
+    if db::entry_exists(&conn, &parsed.title, created).map_err(err)? {
+        return Ok((Outcome::Skipped, images));
+    }
+    db::import_entry(&conn, &parsed.title, &body, &parsed.tags, created, updated).map_err(err)?;
+    Ok((Outcome::Imported, images))
+}
+
+/// Turns a lone image file into an entry showing it (the screenshot's text becomes
+/// searchable once OCR has read it).
+pub fn import_image_file(app: &AppHandle, file: &Path, extra_tags: &[String]) -> Result<Outcome, String> {
+    let bytes = std::fs::read(file).map_err(err)?;
+    let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("png").to_ascii_lowercase();
+    let title = file
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .replace(['_', '-'], " ")
+        .trim()
+        .to_string();
+    let title = if title.is_empty() { "Image".to_string() } else { title };
+    let created = modified_ms(file);
+    {
+        let db = app.state::<Db>();
+        let conn = db.0.lock().map_err(err)?;
+        if db::entry_exists(&conn, &title, created).map_err(err)? {
+            return Ok(Outcome::Skipped);
+        }
+    }
+    let name = store_image(app, &bytes, &ext)?;
+    let db = app.state::<Db>();
+    let conn = db.0.lock().map_err(err)?;
+    db::import_entry(&conn, &title, &format!("![](img:{name})"), extra_tags, created, created)
+        .map_err(err)?;
+    Ok(Outcome::Imported)
+}
+
 pub fn import_paths(app: &AppHandle, paths: &[String]) -> Result<ImportResult, String> {
     let mut files = Vec::new();
     for p in paths {
@@ -186,42 +264,12 @@ pub fn import_paths(app: &AppHandle, paths: &[String]) -> Result<ImportResult, S
     let mut result = ImportResult::default();
 
     for file in files {
-        let name = file.file_name().unwrap_or_default().to_string_lossy().into_owned();
-        let text = match std::fs::read(&file) {
-            Ok(b) => String::from_utf8_lossy(&b).into_owned(),
+        match import_file(app, &file, &[]) {
+            Ok((Outcome::Imported, _)) => result.imported += 1,
+            Ok((Outcome::Skipped, _)) => result.skipped += 1,
             Err(e) => {
                 if result.failed.len() < 20 {
-                    result.failed.push(format!("{name}: {e}"));
-                }
-                continue;
-            }
-        };
-        let stem = file.file_stem().unwrap_or_default().to_string_lossy().into_owned();
-        let parsed = parse_markdown(&text, &stem);
-        if parsed.title.trim().is_empty() && parsed.body.trim().is_empty() {
-            result.skipped += 1;
-            continue;
-        }
-        let base = file.parent().map(Path::to_path_buf).unwrap_or_default();
-        let body = import_images(app, &parsed.body, &base);
-        let mtime = modified_ms(&file);
-
-        let db = app.state::<Db>();
-        let conn = db.0.lock().map_err(err)?;
-        let created = parsed.created.as_deref().and_then(|s| db::local_to_ms(&conn, s)).unwrap_or(mtime);
-        let updated = parsed
-            .updated
-            .as_deref()
-            .and_then(|s| db::local_to_ms(&conn, s))
-            .unwrap_or(created);
-        if db::entry_exists(&conn, &parsed.title, created).map_err(err)? {
-            result.skipped += 1;
-            continue;
-        }
-        match db::import_entry(&conn, &parsed.title, &body, &parsed.tags, created, updated) {
-            Ok(_) => result.imported += 1,
-            Err(e) => {
-                if result.failed.len() < 20 {
+                    let name = file.file_name().unwrap_or_default().to_string_lossy().into_owned();
                     result.failed.push(format!("{name}: {e}"));
                 }
             }

@@ -3,7 +3,7 @@
 //! Installed copies download and run the new installer in the background, then restart.
 //! Portable copies only get told that a new version exists (they can't self-install).
 
-use crate::{err, portable_dir};
+use crate::{err, portable_dir, prefs};
 use serde::Serialize;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -26,7 +26,12 @@ pub struct UpdateInfo {
     releases_url: String,
 }
 
+const OFFLINE_MSG: &str = "Offline mode is on, so BrainTracker doesn’t check for updates.";
+
 pub async fn check(app: &AppHandle) -> Result<Option<UpdateInfo>, String> {
+    if prefs::is_offline(app) {
+        return Err(OFFLINE_MSG.into());
+    }
     let update = app.updater().map_err(err)?.check().await.map_err(err)?;
     let info = update.as_ref().map(|u| UpdateInfo {
         version: u.version.clone(),
@@ -45,6 +50,9 @@ pub async fn install(app: &AppHandle) -> Result<(), String> {
     if portable_dir().is_some() {
         return Err("Portable copies update by downloading the new zip.".into());
     }
+    if prefs::is_offline(app) {
+        return Err(OFFLINE_MSG.into());
+    }
     let update = app
         .state::<UpdateState>()
         .0
@@ -57,7 +65,8 @@ pub async fn install(app: &AppHandle) -> Result<(), String> {
     app.restart();
 }
 
-/// Checks shortly after launch, then every 6 hours, and tells the main window.
+/// Checks shortly after launch, then every 6 hours, and tells the main window
+/// (skipped while offline mode is on).
 pub fn start_checker(app: AppHandle) {
     if cfg!(debug_assertions) {
         return; // dev builds are always "older" than the latest release

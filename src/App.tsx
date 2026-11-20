@@ -168,10 +168,12 @@ export default function App() {
       const e = await api.getEntry(id);
       if (!e) return refresh();
       setCurrent(toDraft(e));
+      // Notes open in preview (double-click or the shortcut to edit); an empty one opens for writing.
+      setPreview(!!e.body.trim());
       setSaveState("idle");
       refresh();
     }
-    if (focusBody) setTimeout(() => bodyRef.current?.focus(), 0);
+    if (focusBody) setTimeout(() => bodyRef.current?.focus(), 0); // only exists when editing
   };
 
   const newEntry = async (title = "") => {
@@ -219,6 +221,13 @@ export default function App() {
     await trashApi.restore(id);
     await refresh();
     openEntry(id);
+  };
+
+  /** Opens the note in a small always-on-top window (saved first, so it shows what you see). */
+  const popOut = async () => {
+    await flush();
+    const d = draftRef.current;
+    if (d) api.popOut(d.id).catch(console.error);
   };
 
   const openHistory = async () => {
@@ -528,6 +537,9 @@ export default function App() {
               </button>
               <button className={`tool ${preview ? "on" : ""}`} onClick={() => setPreview((p) => !p)} title={sc.preview}>
                 {preview ? "✎ Edit" : "◉ Preview"}
+              </button>
+              <button className="tool" onClick={popOut} title="Open in a small window that stays on top, to follow along while you work">
+                ⧉ Pop out
               </button>
               <button className="tool" onClick={openHistory} title="Earlier versions of this entry">
                 ↺ History

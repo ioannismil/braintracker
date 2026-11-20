@@ -6,7 +6,7 @@ export default defineConfig({
   clearScreen: false,
   build: {
     rollupOptions: {
-      input: { main: "index.html", capture: "capture.html", spotlight: "spotlight.html" },
+      input: { main: "index.html", capture: "capture.html", spotlight: "spotlight.html", note: "note.html" },
     },
   },
   server: {

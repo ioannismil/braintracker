@@ -51,13 +51,13 @@ Full-text search across titles, notes and tags, as you type, with highlighted ma
 <td valign="top">
 
 ### 📝 Notes that hold the "how"
-Markdown with code blocks (each with a one-click **Copy** button), lists and links. Paste screenshots straight in with <kbd>Ctrl</kbd> <kbd>V</kbd>, and the text in them becomes searchable too (read offline by Windows' built-in OCR), so searching an error code finds the screenshot of that error. Everything auto-saves as you type.
+Markdown with code blocks (each with a one-click **Copy** button), lists and links. Write blanks into a command, like `ssh {{user}}@{{host}} -p {{port:22}}`, and **Copy** asks for the values first, remembering them for next time (see **Settings → Commands**). Paste screenshots straight in with <kbd>Ctrl</kbd> <kbd>V</kbd>, and the text in them becomes searchable too (read offline by Windows' built-in OCR), so searching an error code finds the screenshot of that error. Everything auto-saves as you type.
 
 </td>
 <td valign="top">
 
 ### 🗂️ Easy to navigate
-Entries grouped by *Today · Yesterday · This week · month*. Pin the important ones to the top. Browse with the arrow keys without touching the mouse.
+Entries grouped by *Today · Yesterday · This week · month*. Pin the important ones to the top. Browse with the arrow keys without touching the mouse. **Pop out** a note into a small window that stays on top of other apps, to follow its steps while you work.
 
 </td>
 </tr>
@@ -71,7 +71,7 @@ Starts with Windows and lives in the system tray. Summon the full window with <k
 <td valign="top">
 
 ### 🔒 Yours, and offline
-No account, no cloud, no telemetry. One local SQLite file you can export to plain Markdown anytime. Every shortcut is configurable.
+No account, no cloud, no telemetry. One local SQLite file you can export to plain Markdown anytime. Every shortcut is configurable. Turn on **offline mode** and BrainTracker makes no network connections at all: no update checks, no web images.
 
 </td>
 </tr>
@@ -99,7 +99,7 @@ Deleting moves an entry to the **Trash** for 30 days (with an instant *Undo*). E
 <td valign="top">
 
 ### 📦 Bring your notes with you
-**Import** folders of Markdown or text notes — titles, tags, dates and images included. Round-trips cleanly with BrainTracker's own Markdown export.
+**Import** folders of Markdown or text notes — titles, tags, dates and images included. Round-trips cleanly with BrainTracker's own Markdown export. Or switch on the **inbox folder**: anything you save into it (say, a OneDrive folder, from your phone) becomes an entry automatically.
 
 </td>
 </tr>
@@ -157,7 +157,8 @@ Example: `vpn tag:home after:2026-01 has:code`
 |---|---|
 | Search box | <kbd>↑</kbd> <kbd>↓</kbd> browse results · <kbd>Enter</kbd> open · <kbd>Enter</kbd> with no results creates an entry with that title · <kbd>Esc</kbd> clear |
 | Quick capture | <kbd>Enter</kbd> save (stays open for the next one) · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> save & close · <kbd>Shift</kbd>+<kbd>Enter</kbd> jump to notes · <kbd>Ctrl</kbd>+<kbd>O</kbd> open app · <kbd>Esc</kbd> close — all changeable in Settings |
-| Quick search | type to find notes · <kbd>↑</kbd> <kbd>↓</kbd> choose · <kbd>Enter</kbd> show the whole note · <kbd>Enter</kbd> again or <kbd>Ctrl</kbd>+<kbd>Enter</kbd> open it in BrainTracker · <kbd>Esc</kbd> back / clear / close |
+| Quick search | type to find notes · <kbd>↑</kbd> <kbd>↓</kbd> choose · <kbd>Enter</kbd> show the whole note · <kbd>Enter</kbd> again or <kbd>Ctrl</kbd>+<kbd>Enter</kbd> open it in BrainTracker · <kbd>Ctrl</kbd>+<kbd>P</kbd> pop it out on top · <kbd>Esc</kbd> back / clear / close |
+| Popped-out note | <kbd>Esc</kbd> close · **📌 On top** toggles staying above other apps · **✎ Edit** opens it in BrainTracker |
 | Editor | <kbd>Tab</kbd> indents · <kbd>Ctrl</kbd>+<kbd>V</kbd> pastes screenshots · double-click the preview to edit |
 
 </details>
@@ -214,6 +215,10 @@ Inside you'll find `braintracker.db` (all entries, plus the text read from your 
 **Trash & history:** deleted entries wait in the **Trash** (sidebar, bottom) for 30 days. While you edit, a version is saved at most every 10 minutes (last 50 per entry) — open **↺ History** in the editor to compare and restore.
 
 **Export & import:** **Settings → Export** writes every entry as a Markdown file — screenshots included — to `Documents\BrainTracker Export`. **Settings → Import** reads Markdown/text files or whole folders back in (titles, tags, dates, front matter and local images), skipping anything already imported.
+
+**Inbox folder:** **Settings → Inbox folder** watches a folder (by default `Documents\BrainTracker Inbox`) and imports Markdown/text files and images put into it, tagged `#inbox`, then moves them into its `Imported` subfolder. A file is only imported once it has stopped changing, so files still being synced are left alone. Pick a folder inside OneDrive, Dropbox or Google Drive to capture from your phone through that service's app.
+
+**Offline mode:** **Settings → Offline mode** stops every network connection BrainTracker makes: update checks and web images in notes (shown as a placeholder instead). Links still open in your browser when you click them.
 
 **Clean up:** **Settings → Clean up screenshots** removes pasted images no entry, trashed entry or old version still uses.
 
