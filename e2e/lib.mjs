@@ -55,7 +55,9 @@ export function bt(...args) {
 
 let driverProc;
 export async function start() {
-  driverProc = spawn(cfg.tauriDriver, ["--native-driver", cfg.edgeDriver], { stdio: "ignore" });
+  // The drivers' own output (and the app's, which they pass on) goes to out/driver.log.
+  const log = fs.openSync(path.join(cfg.out, "driver.log"), "a");
+  driverProc = spawn(cfg.tauriDriver, ["--native-driver", cfg.edgeDriver], { stdio: ["ignore", log, log] });
   let last;
   for (let i = 0; i < 20; i++) {
     await sleep(500);
@@ -72,7 +74,31 @@ export async function start() {
     }
   }
   driverProc.kill();
-  throw new Error(`couldn't start the app under WebDriver: ${last?.message ?? last}`);
+  throw new Error(`couldn't start the app under WebDriver: ${last?.message ?? last}\n${await diagnose()}`);
+}
+
+/** Starts the app directly (no WebDriver) for a few seconds: does it run at all, or crash? */
+async function diagnose() {
+  const lines = [];
+  const p = spawn(cfg.exe, [], { stdio: ["ignore", "pipe", "pipe"] });
+  let output = "";
+  p.stdout.on("data", (b) => (output += b));
+  p.stderr.on("data", (b) => (output += b));
+  let exit = null;
+  p.on("exit", (code) => (exit = code));
+  await sleep(6000);
+  if (exit === null) {
+    lines.push("Started directly, the app runs (so it's the WebDriver connection that fails).");
+    p.kill();
+  } else {
+    lines.push(`Started directly, the app exited with code ${exit} (0x${(exit >>> 0).toString(16)}).`);
+  }
+  if (output.trim()) lines.push(`Its output:\n${output.trim().slice(0, 2000)}`);
+  try {
+    const log = fs.readFileSync(path.join(cfg.out, "driver.log"), "utf8").trim();
+    if (log) lines.push(`Driver log (end):\n${log.slice(-2500)}`);
+  } catch {}
+  return lines.join("\n");
 }
 
 export async function stop(driver) {
