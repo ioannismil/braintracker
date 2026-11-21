@@ -1061,8 +1061,11 @@ pub fn run() {
         cli::Parsed::Gui(action) => action,
     };
 
-    // Portable mode also keeps WebView2's cache beside the exe instead of in %LOCALAPPDATA%.
-    if let Some(dir) = portable_dir() {
+    // Portable mode also keeps WebView2's cache beside the exe instead of in %LOCALAPPDATA%
+    // (unless something driving the app, e.g. an automated test, already chose a folder).
+    let chosen = std::env::var_os("WEBVIEW2_USER_DATA_FOLDER").is_some()
+        || std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").is_ok_and(|a| a.contains("--user-data-dir"));
+    if let Some(dir) = portable_dir().filter(|_| !chosen) {
         let webview = dir.join("webview");
         let _ = std::fs::create_dir_all(&webview);
         std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", webview);

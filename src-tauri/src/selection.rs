@@ -45,6 +45,14 @@ mod imp {
     }
 
     pub fn copy_selection() -> Option<String> {
+        // The shortcut's last key (e.g. Space) went to us, not to the app, so to the app it
+        // looks like Alt (or Win) was pressed and released on its own: letting go of it would
+        // open the app's menu bar (Notepad, Office, Explorer…) and Ctrl+C would go to the menu.
+        // Tapping an unassigned key now, while it's still down, stops that.
+        if [VK_LMENU, VK_RMENU, VK_LWIN, VK_RWIN].iter().any(|&vk| held(vk)) {
+            send(&[key(VK_DUMMY, false), key(VK_DUMMY, true)]);
+        }
+
         // The shortcut's own keys are probably still down; Ctrl+C with Shift or Alt held would
         // be a different command (Ctrl+Shift+C opens dev tools in browsers). Give the user a
         // moment to let go, then release whatever is still held.
