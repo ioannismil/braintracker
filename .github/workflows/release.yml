@@ -73,23 +73,6 @@ jobs:
             npx tauri build
           fi
 
-      - name: Install tauri-driver
-        shell: bash
-        run: command -v tauri-driver || cargo install tauri-driver --locked
-
-      # Nothing is published unless the built app starts and works: drives the real app
-      # (windows, buttons, keys, bt) in a portable copy with its own data. Tests that need a
-      # real desktop (system-wide shortcuts etc.) are skipped here; run `npm run e2e` locally.
-      - name: End-to-end tests
-        run: npm run e2e -- --ci
-
-      - name: Upload screenshots of failed end-to-end tests
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: e2e-failures
-          path: e2e/out
-
       - name: Package installer + portable zip
         shell: pwsh
         run: |

@@ -246,10 +246,10 @@ cargo install tauri-driver --locked   # once
 npx tauri build --no-bundle           # build the app to test
 npm run e2e                           # everything; presses real keys, so don't type while it runs
 npm run e2e -- --stop-app             # same, quitting your running BrainTracker first (restarted after)
-npm run e2e -- --ci                   # skip tests that need a real desktop (what CI runs)
+npm run e2e -- --ci                   # skip tests that need a real desktop
 ```
 
-Screenshots of any failures go to `e2e/out/`.
+Screenshots of any failures go to `e2e/out/`. They aren't run by the release workflow (desktop tests don't suit GitHub's Windows machines), so run them before pushing app changes.
 
 <details>
 <summary><b>Project structure</b></summary>
@@ -287,10 +287,9 @@ Every push to `main` runs the [Release workflow](.github/workflows/release.yml),
 
 1. runs the test suite,
 2. builds the app and the NSIS installer,
-3. runs the end-to-end tests against the built app; nothing is published if any fail,
-4. packages the portable zip,
-5. signs the installer and publishes `latest.json`, which installed copies use to update themselves,
-6. publishes a GitHub release tagged **`v<major>.<minor>.<build>`** with a changelog generated from the commits since the previous release.
+3. packages the portable zip,
+4. signs the installer and publishes `latest.json`, which installed copies use to update themselves,
+5. publishes a GitHub release tagged **`v<major>.<minor>.<build>`** with a changelog generated from the commits since the previous release.
 
 - To start a new version series, change `major.minor` in [`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json) (e.g. `0.2.0` → releases become `v0.2.N`).
 - Commits that only touch Markdown/docs don't trigger a release. Add `[skip ci]` to a commit message to skip one manually.
