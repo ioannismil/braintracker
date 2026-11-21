@@ -63,10 +63,11 @@ function edgeDriver() {
   if (!fs.existsSync(exe)) {
     console.log(`Downloading Edge WebDriver ${v}…`);
     fs.mkdirSync(dir, { recursive: true });
-    ps(
-      `$ProgressPreference='SilentlyContinue'; Invoke-WebRequest 'https://msedgedriver.microsoft.com/${v}/edgedriver_win64.zip' -OutFile '${dir}\\d.zip'; ` +
-        `Expand-Archive '${dir}\\d.zip' -DestinationPath '${dir}' -Force; Remove-Item '${dir}\\d.zip'`,
-    );
+    const zip = path.join(dir, "d.zip");
+    ps(`$ProgressPreference='SilentlyContinue'; Invoke-WebRequest 'https://msedgedriver.microsoft.com/${v}/edgedriver_win64.zip' -OutFile '${zip}'`);
+    execFileSync(path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe"), ["-xf", zip, "-C", dir]); // Windows' own tar unpacks zips
+    fs.unlinkSync(zip);
+    if (!fs.existsSync(exe)) fail(`downloaded Edge WebDriver ${v}, but there's no msedgedriver.exe in it`);
   }
   return exe;
 }

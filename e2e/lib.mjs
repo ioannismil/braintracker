@@ -25,13 +25,23 @@ export const cfg = {
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Windows PowerShell 5.1, with its own module path (PowerShell 7, e.g. in GitHub Actions, sets
+// one that breaks 5.1's modules).
+const psEnv = { ...process.env };
+delete psEnv.PSModulePath;
+
+/**
+ * Runs a PowerShell script and returns its output. Only a real error fails it: a query that
+ * finds nothing (e.g. Get-Process … -ErrorAction SilentlyContinue) still succeeds.
+ */
 export function ps(script) {
-  return execFileSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8" }).trim();
+  const wrapped = `$ErrorActionPreference = 'Stop'\ntry {\n${script}\n} catch { [Console]::Error.WriteLine($_); exit 1 }\nexit 0`;
+  return execFileSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", wrapped], { encoding: "utf8", env: psEnv }).trim();
 }
 
 /** Presses a key combo system-wide, like a real keyboard (for global shortcuts). */
 export function press(combo) {
-  execFileSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(HERE, "keys.ps1"), combo]);
+  execFileSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(HERE, "keys.ps1"), combo], { env: psEnv });
 }
 
 /** Runs the `bt` command line of the test copy. */
