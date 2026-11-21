@@ -37,3 +37,22 @@ jobs:
 
       - name: Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Build app
+        run: npx tauri build --no-bundle
+
+      - name: Install tauri-driver
+        shell: bash
+        run: command -v tauri-driver || cargo install tauri-driver --locked
+
+      # Drives the real app (windows, buttons, keys, bt) in a portable copy with its own data.
+      # Tests that need a real desktop (system-wide shortcuts etc.) are skipped here.
+      - name: End-to-end tests
+        run: npm run e2e -- --ci
+
+      - name: Upload screenshots of failed end-to-end tests
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-failures
+          path: e2e/out

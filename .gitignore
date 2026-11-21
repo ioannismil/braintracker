@@ -3,3 +3,7 @@ dist
 src-tauri/target
 src-tauri/gen
 *.log
+
+# end-to-end test downloads and results
+e2e/.cache
+e2e/out

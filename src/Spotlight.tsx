@@ -207,7 +207,7 @@ export default function Spotlight() {
           />
           <footer className="spot-foot">
             <span>
-              <kbd>↑</kbd> <kbd>↓</kbd> next note · <kbd>Enter</kbd> edit · <kbd>Ctrl</kbd>+<kbd>P</kbd> pop out ·{" "}
+              <kbd>↑</kbd> <kbd>↓</kbd> next note · <kbd>Enter</kbd> open in BrainTracker · <kbd>Ctrl</kbd>+<kbd>P</kbd> pop out ·{" "}
               <kbd>Esc</kbd> back
             </span>
             <span className="spot-actions">
