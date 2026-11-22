@@ -102,8 +102,8 @@ pub fn pair(db: &Mutex<Connection>, code_text: &str) -> Result<Link, String> {
     );
     let agent = agent();
     let mut last = String::from("The PC didn’t answer.");
-    for addr in &code.addresses {
-        let base = format!("{addr}:{}", code.port);
+    let bases: Vec<String> = code.addresses.iter().map(|a| format!("{a}:{}", code.port)).collect();
+    for base in fastest_first(&bases) {
         match post(&agent, &format!("http://{base}/pair"), &[("X-BT-Pair", code.token.as_str())], &body) {
             Ok(bytes) => {
                 let plain = crypto::open(&key, "/pair:resp", &bytes).ok_or("The PC’s answer couldn’t be read.")?;
@@ -128,13 +128,14 @@ pub fn pair(db: &Mutex<Connection>, code_text: &str) -> Result<Link, String> {
             Err(Failure::Unreachable(e)) => last = e,
         }
     }
-    let tried = code.addresses.iter().map(|a| format!("{a}:{}", code.port)).collect::<Vec<_>>().join(", ");
+    let tried = bases.join(", ");
+    let first = bases.first().map(String::as_str).unwrap_or("the PC");
     Err(format!(
         "Couldn’t reach the PC at {tried} ({last}).
 
-Check that this phone is on the same Wi-Fi as the PC (its address should start the same way, e.g. 192.168.1.…) and not on mobile data or a guest network. To test, open http://{}:{}/ in the phone’s browser: if it doesn’t load, the network or the PC’s firewall is blocking it.",
-        code.addresses.first().map(String::as_str).unwrap_or("the PC"),
-        code.port
+         • Allow BrainTracker to reach devices on your network: Settings → Apps → BrainTracker →          Permissions → Nearby devices.
+         • Check that this phone is on the same Wi-Fi as the PC (not mobile data or a guest network),          or that Tailscale is on on both.
+         • To test the network, open http://{first}/ in the phone’s browser: if it doesn’t load, the          network or the PC’s firewall is blocking it."
     ))
 }
 
@@ -170,7 +171,7 @@ impl Session<'_> {
         let mut last = String::new();
         let mut candidates = match &self.base {
             Some(b) => vec![b.clone()],
-            None => self.candidates(),
+            None => fastest_first(&self.candidates()),
         };
         let mut discovered = false;
         loop {
@@ -321,6 +322,39 @@ fn upload(s: &mut Session, images: &Path, name: &str) {
     if let Ok(bytes) = std::fs::read(images.join(name)) {
         let _ = s.call("/image/put", &join_upload(name, &bytes));
     }
+}
+
+/// These "ip:port" addresses with the best one that accepts a connection at the front (they're
+/// all tried at once, so a PC with several addresses — home Wi-Fi, Tailscale, virtual
+/// adapters — doesn't cost a timeout per dead one).
+fn fastest_first(bases: &[String]) -> Vec<String> {
+    use std::net::{SocketAddr, TcpStream};
+    let (tx, rx) = std::sync::mpsc::channel();
+    for base in bases {
+        let Ok(addr) = base.parse::<SocketAddr>() else { continue };
+        let (tx, base) = (tx.clone(), base.clone());
+        std::thread::spawn(move || {
+            if TcpStream::connect_timeout(&addr, Duration::from_secs(5)).is_ok() {
+                let _ = tx.send(base);
+            }
+        });
+    }
+    drop(tx);
+    // The first to answer, unless one earlier in the list (e.g. the address that worked last
+    // time) answers within a moment of it.
+    let rank = |b: &String| bases.iter().position(|x| x == b).unwrap_or(usize::MAX);
+    let mut best = rx.recv_timeout(Duration::from_secs(6)).ok();
+    if best.is_some() {
+        let until = std::time::Instant::now() + Duration::from_millis(300);
+        while let Some(left) = until.checked_duration_since(std::time::Instant::now()) {
+            match rx.recv_timeout(left) {
+                Ok(b) if best.as_ref().is_none_or(|x| rank(&b) < rank(x)) => best = Some(b),
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+    }
+    best.iter().cloned().chain(bases.iter().filter(|b| Some(*b) != best.as_ref()).cloned()).collect()
 }
 
 /// Asks the local network where the PC with this id is. Returns "ip:port".

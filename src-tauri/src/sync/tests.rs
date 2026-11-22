@@ -261,3 +261,12 @@ fn a_browser_can_check_the_pc_is_reachable() {
     let mut resp = ureq::get(&format!("http://127.0.0.1:{}/", running.host.port)).call().unwrap();
     assert!(resp.body_mut().read_to_string().unwrap().contains("can be reached"));
 }
+
+#[test]
+#[ignore = "prints this machine's addresses; run by hand"]
+fn print_local_addresses() {
+    for i in if_addrs::get_if_addrs().unwrap() {
+        println!("iface {:?} {}", i.name, i.ip());
+    }
+    println!("advertised: {:?}", server::local_addresses());
+}

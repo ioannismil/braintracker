@@ -109,20 +109,25 @@ impl Reply {
 
 /// This PC's addresses on the local network, the likeliest home-network ones first.
 pub fn local_addresses() -> Vec<String> {
+    // Virtual adapters (VMs, WSL, Docker, VPN clients) a phone can't reach: left out.
+    const VIRTUAL: [&str; 8] = ["vmware", "virtualbox", "vethernet", "hyper-v", "wsl", "docker", "nordlynx", "openvpn"];
     let mut v4: Vec<std::net::Ipv4Addr> = if_addrs::get_if_addrs()
         .unwrap_or_default()
         .into_iter()
         .filter(|i| !i.is_loopback())
+        .filter(|i| !VIRTUAL.iter().any(|v| i.name.to_lowercase().contains(v)))
         .filter_map(|i| match i.ip() {
             std::net::IpAddr::V4(a) if !a.is_link_local() && !a.is_unspecified() => Some(a),
             _ => None,
         })
         .collect();
+    // Home networks first, then Tailscale (100.64.0.0/10), which reaches the PC from anywhere.
     let rank = |a: &std::net::Ipv4Addr| match a.octets() {
         [192, 168, ..] => 0,
         [10, ..] => 1,
         [172, b, ..] if (16..32).contains(&b) => 2,
-        _ => 3,
+        [100, b, ..] if (64..128).contains(&b) => 3,
+        _ => 4,
     };
     v4.sort_by_key(|a| (rank(a), *a));
     v4.dedup();
