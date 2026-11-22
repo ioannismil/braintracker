@@ -224,12 +224,14 @@ jobs:
           else
             echo "::warning::ANDROID_KEYSTORE secret is not set — the APK is signed with a one-off key, so the next release won't install over it (uninstall first)."
             pw=$(openssl rand -hex 16)
-            keytool -genkeypair -keystore "$ks" -storetype PKCS12 -alias braintracker -keyalg RSA -keysize 4096               -validity 36500 -storepass "$pw" -keypass "$pw" -dname "CN=BrainTracker"
+            keytool -genkeypair -keystore "$ks" -storetype PKCS12 -alias braintracker -keyalg RSA -keysize 4096 \
+              -validity 36500 -storepass "$pw" -keypass "$pw" -dname "CN=BrainTracker"
           fi
-          printf 'keyAlias=braintracker
-password=%s
-storeFile=%s
-' "$pw" "$ks" > src-tauri/gen/android/keystore.properties
+          {
+            echo "keyAlias=braintracker"
+            echo "password=$pw"
+            echo "storeFile=$ks"
+          } > src-tauri/gen/android/keystore.properties
 
       - name: Build the APK
         run: npx tauri android build --apk --target aarch64 armv7 x86_64
