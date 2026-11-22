@@ -451,3 +451,9 @@ kbd {
 .conflict { display: flex; align-items: center; gap: 12px; margin: 0 24px 4px; padding: 10px 14px; border: 1px solid var(--danger); border-radius: 10px; background: var(--sheet); font-size: 13px; color: var(--ink); }
 .conflict code { font: 12px var(--mono); background: var(--code-bg); padding: 0 4px; border-radius: 4px; }
 .conflict-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+/* ---------- phone sync pairing (Settings) ---------- */
+.pair-box { display: flex; gap: 16px; align-items: flex-start; margin-top: 10px; }
+.pair-qr { flex-shrink: 0; width: 200px; height: 200px; border-radius: 8px; overflow: hidden; background: #fff; }
+.pair-qr svg { width: 100%; height: 100%; display: block; }
+.pair-code { width: 100%; height: 64px; margin-top: 8px; font: 11px var(--mono); resize: none; border: 1px solid var(--line); border-radius: 6px; padding: 6px; background: var(--bg); }

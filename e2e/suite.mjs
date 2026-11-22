@@ -738,6 +738,31 @@ export async function run() {
       await waitFor(async () => /unused|No unused|nothing/i.test(await text(d, ".dialog")), 3000, "result");
     });
 
+    await test("Phone sync: turn on, show a pairing QR code, cancel, turn off", async () => {
+      // (The sync protocol itself is tested in Rust: src-tauri/src/sync/tests.rs.)
+      await keys(Key.ESCAPE);
+      await ctrl(",");
+      await waitFor(() => exists(d, ".dialog"), 2000, "settings");
+      await waitFor(async () => /Sync with your phone/.test(await text(d, ".dialog")), 3000, "phone sync section");
+      await (await $(d, '.dialog button[aria-label="Sync with your phone"]')).click();
+      await waitFor(async () => {
+        try {
+          return !!(await buttonByText(d, "Pair a phone", ".dialog"));
+        } catch {
+          return false;
+        }
+      }, 4000, "sync switched on");
+      await (await buttonByText(d, "Pair a phone", ".dialog")).click();
+      await waitFor(() => exists(d, ".dialog .pair-qr svg"), 4000, "QR code");
+      const st = await invoke(d, "sync_status");
+      if (!st.enabled || !st.running || !st.pairing?.code.startsWith("BTSYNC1:"))
+        throw new Error(JSON.stringify({ ...st, pairing: !!st.pairing }));
+      await (await buttonByText(d, "Cancel", ".dialog", true)).click();
+      await waitFor(async () => !(await exists(d, ".dialog .pair-qr")), 3000, "QR code gone");
+      const off = await invoke(d, "set_sync_enabled", { enabled: false });
+      if (off.running) throw new Error("still listening after turning sync off");
+    });
+
     await test("Export writes every note as Markdown", async () => {
       const dir = await invoke(d, "export_markdown");
       const files = fs.readdirSync(dir).filter((f) => f.endsWith(".md"));

@@ -15,16 +15,34 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.43.0", features = ["bundled"] }
+tauri-plugin-opener = "2.7.3"
+tauri-plugin-dialog = "2.8.4"
+# Phone sync over Wi-Fi (src/sync/): a small HTTP server on the PC, a client on the phone, and
+# every request and reply encrypted with the key the phone got from the pairing QR code.
+tiny_http = "0.12"
+ureq = { version = "3", default-features = false }
+chacha20poly1305 = "0.10"
+getrandom = "0.3"
+base64 = "0.22"
+if-addrs = "0.13"
+
+# The desktop app only: tray, system-wide shortcuts, auto-update, start with Windows.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-autostart = "2.7.0"
 tauri-plugin-single-instance = "2.5.5"
 tauri-plugin-global-shortcut = "2.4.1"
-tauri-plugin-opener = "2.7.3"
-tauri-plugin-dialog = "2.8.4"
 tauri-plugin-updater = "2.14.1"
+# The pairing QR code shown in Settings
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+
+# The phone app only: scanning the pairing QR code.
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+tauri-plugin-barcode-scanner = "2"
 
 [target.'cfg(windows)'.dependencies]
 arboard = "3"

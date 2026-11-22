@@ -218,3 +218,41 @@ export function parseTags(text: string): string[] {
     .map((t) => t.trim().replace(/^#/, "").toLowerCase().split(/\s+/).join("-"))
     .filter(Boolean);
 }
+
+// ---------- phone sync (src-tauri/src/sync/) ----------
+
+/** The PC side: Settings → Sync with your phone. */
+export interface PcSyncStatus {
+  enabled: boolean;
+  offline: boolean;
+  running: boolean;
+  port: number | null;
+  addresses: string[];
+  error: string | null;
+  peers: { id: string; name: string; pairedAt: number; lastSync: number | null }[];
+  /** A pairing code on screen, waiting for a phone to scan it. */
+  pairing: { qrSvg: string; code: string; expiresAt: number } | null;
+}
+
+/** The phone side. */
+export interface PhoneSyncStatus {
+  paired: boolean;
+  pcName: string | null;
+  lastSync: number | null;
+  lastError: string | null;
+  syncing: boolean;
+  offline: boolean;
+}
+
+export const syncApi = {
+  pcStatus: () => invoke<PcSyncStatus>("sync_status"),
+  setEnabled: (enabled: boolean) => invoke<PcSyncStatus>("set_sync_enabled", { enabled }),
+  startPairing: () => invoke<PcSyncStatus>("start_pairing"),
+  cancelPairing: () => invoke<PcSyncStatus>("cancel_pairing"),
+  removePeer: (id: string) => invoke<PcSyncStatus>("remove_peer", { id }),
+
+  phoneStatus: () => invoke<PhoneSyncStatus>("sync_status"),
+  pairWith: (code: string) => invoke<PhoneSyncStatus>("pair_with", { code }),
+  syncNow: () => invoke<PhoneSyncStatus>("sync_now"),
+  unpair: () => invoke<PhoneSyncStatus>("unpair"),
+};

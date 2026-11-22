@@ -4,10 +4,17 @@ use rusqlite::{params, params_from_iter, types::Value, Connection, OptionalExten
 use serde::Serialize;
 use std::collections::HashSet;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub struct Db(pub Mutex<Connection>);
+/// The app's connection. Shared (Arc) so the sync server thread can use it too.
+pub struct Db(pub Arc<Mutex<Connection>>);
+
+impl Db {
+    pub fn new(conn: Connection) -> Self {
+        Db(Arc::new(Mutex::new(conn)))
+    }
+}
 
 /// Markers wrapped around search hits in snippets (rendered as highlights by the UI).
 #[cfg(test)]
@@ -221,7 +228,74 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     if has_deleted == 0 {
         conn.execute_batch("ALTER TABLE entries ADD COLUMN deleted_at INTEGER")?;
     }
-    Ok(())
+    migrate_sync(conn)
+}
+
+/// The current time in unix ms, in SQL.
+const NOW_SQL: &str = "CAST(unixepoch('subsec') * 1000 AS INTEGER)";
+
+/// Columns, tables and triggers phone sync needs (see sync/mod.rs):
+/// - `uid`: the entry's id on every device (row ids differ between devices);
+/// - `modified_at`: when anything about it last changed (text, tags, pin, trash). When both
+///   devices changed it, the later one wins;
+/// - `rev`: this device's change number for it, from `sync_clock`. `rev_from` is the device
+///   sync copied it from (NULL = changed here), so it isn't sent back there;
+/// - `sync_tombstones`: entries deleted for good, so the other device deletes them too.
+///
+/// The triggers keep these up to date for every write — the app's, `bt`'s, or an older copy
+/// of either — except sync's own, which sets `rev` itself (the triggers skip a write that
+/// changes `rev`).
+fn migrate_sync(conn: &Connection) -> rusqlite::Result<()> {
+    let has_uid: i64 =
+        conn.query_row("SELECT count(*) FROM pragma_table_info('entries') WHERE name = 'uid'", [], |r| r.get(0))?;
+    if has_uid == 0 {
+        let tx = conn.unchecked_transaction()?;
+        tx.execute_batch(
+            "ALTER TABLE entries ADD COLUMN uid TEXT;
+             ALTER TABLE entries ADD COLUMN modified_at INTEGER;
+             ALTER TABLE entries ADD COLUMN rev INTEGER;
+             ALTER TABLE entries ADD COLUMN rev_from TEXT;
+             UPDATE entries SET uid = lower(hex(randomblob(16))),
+                                modified_at = max(updated_at, coalesce(deleted_at, 0)),
+                                rev = id;",
+        )?;
+        tx.commit()?;
+    }
+    conn.execute_batch(&format!(
+        "CREATE UNIQUE INDEX IF NOT EXISTS entries_uid ON entries(uid);
+         CREATE INDEX IF NOT EXISTS entries_rev ON entries(rev);
+         CREATE TABLE IF NOT EXISTS sync_clock (id INTEGER PRIMARY KEY CHECK (id = 1), rev INTEGER NOT NULL);
+         INSERT OR IGNORE INTO sync_clock (id, rev) SELECT 1, coalesce(max(rev), 0) FROM entries;
+         CREATE TABLE IF NOT EXISTS sync_tombstones (
+             uid        TEXT PRIMARY KEY,
+             deleted_at INTEGER NOT NULL,
+             rev        INTEGER NOT NULL,
+             rev_from   TEXT
+         );
+         CREATE INDEX IF NOT EXISTS sync_tombstones_rev ON sync_tombstones(rev);
+
+         CREATE TRIGGER IF NOT EXISTS sync_entries_ai AFTER INSERT ON entries WHEN new.rev IS NULL BEGIN
+             UPDATE sync_clock SET rev = rev + 1 WHERE id = 1;
+             UPDATE entries SET uid = coalesce(new.uid, lower(hex(randomblob(16)))),
+                                modified_at = coalesce(new.modified_at, max(new.updated_at, {NOW})),
+                                rev = (SELECT rev FROM sync_clock WHERE id = 1), rev_from = NULL
+             WHERE id = new.id;
+         END;
+         CREATE TRIGGER IF NOT EXISTS sync_entries_au AFTER UPDATE OF title, body, tags, pinned, deleted_at ON entries
+         WHEN new.rev IS old.rev BEGIN
+             UPDATE sync_clock SET rev = rev + 1 WHERE id = 1;
+             UPDATE entries SET modified_at = max({NOW}, coalesce(old.modified_at, 0) + 1),
+                                rev = (SELECT rev FROM sync_clock WHERE id = 1), rev_from = NULL
+             WHERE id = new.id;
+         END;
+         CREATE TRIGGER IF NOT EXISTS sync_entries_ad AFTER DELETE ON entries WHEN old.uid IS NOT NULL BEGIN
+             UPDATE sync_clock SET rev = rev + 1 WHERE id = 1;
+             INSERT INTO sync_tombstones (uid, deleted_at, rev, rev_from)
+             VALUES (old.uid, max({NOW}, coalesce(old.modified_at, 0) + 1), (SELECT rev FROM sync_clock WHERE id = 1), NULL)
+             ON CONFLICT(uid) DO UPDATE SET deleted_at = excluded.deleted_at, rev = excluded.rev, rev_from = NULL;
+         END;",
+        NOW = NOW_SQL
+    ))
 }
 
 pub fn now_ms() -> i64 {
@@ -808,9 +882,40 @@ pub fn referenced_images(conn: &Connection) -> rusqlite::Result<HashSet<String>>
     Ok(out)
 }
 
-/// Stores the text read from a screenshot and re-indexes the entries that show it.
+/// Keeps a version of an entry in its History (e.g. the one sync is about to replace).
+pub fn snapshot_version(conn: &Connection, id: i64, title: &str, body: &str, tags: &str, saved_at: i64) -> rusqlite::Result<()> {
+    snapshot(conn, id, title, body, tags, saved_at, now_ms())
+}
+
+/// Stores the text read from a screenshot (by OCR, here) and re-indexes the entries that show
+/// it. Those entries are then sent to a paired phone again, now with the text.
 pub fn set_image_text(conn: &Connection, name: &str, text: &str) -> rusqlite::Result<()> {
     let tx = conn.unchecked_transaction()?;
+    if set_image_text_in(&tx, name, text)? {
+        let ids: Vec<i64> = tx
+            .prepare("SELECT id FROM entries WHERE instr(body, '](img:' || ?1 || ')') > 0")?
+            .query_map(params![name], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        for id in ids {
+            // A new change number only: the entry's content and `modified_at` stay as they are.
+            tx.execute("UPDATE sync_clock SET rev = rev + 1 WHERE id = 1", [])?;
+            tx.execute(
+                "UPDATE entries SET rev = (SELECT rev FROM sync_clock WHERE id = 1), rev_from = NULL WHERE id = ?1",
+                params![id],
+            )?;
+        }
+    }
+    tx.commit()
+}
+
+/// Stores a screenshot's text and re-indexes, inside a transaction that's already open (sync
+/// uses this for text read on the other device). True if the text is new or different.
+pub fn set_image_text_in(tx: &Connection, name: &str, text: &str) -> rusqlite::Result<bool> {
+    let before: Option<String> =
+        tx.query_row("SELECT text FROM image_text WHERE name = ?1", params![name], |r| r.get(0)).optional()?;
+    if before.as_deref() == Some(text.trim()) {
+        return Ok(false);
+    }
     tx.execute(
         "INSERT INTO image_text (name, text, read_at) VALUES (?1, ?2, ?3)
          ON CONFLICT(name) DO UPDATE SET text = excluded.text, read_at = excluded.read_at",
@@ -824,7 +929,7 @@ pub fn set_image_text(conn: &Connection, name: &str, text: &str) -> rusqlite::Re
         ),
         params![name],
     )?;
-    tx.commit()
+    Ok(true)
 }
 
 /// Screenshots whose text has already been read (whether or not any was found).

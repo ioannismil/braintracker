@@ -4,6 +4,7 @@ import { api, prefsApi, updateApi, type AppInfo, type UpdateInfo } from "./api";
 import Backups from "./Backups";
 import DataTools from "./DataTools";
 import Inbox from "./Inbox";
+import PhoneSync from "./PhoneSync";
 import Placeholders from "./Placeholders";
 import UpdateBanner from "./UpdateBanner";
 import {
@@ -308,6 +309,8 @@ export default function Settings({ info, onChange, onClose, onUpdateFound, befor
             <Backups />
 
             <Inbox />
+
+            <PhoneSync />
 
             <DataTools />
 

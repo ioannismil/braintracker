@@ -1,6 +1,7 @@
 name: Release
 
-# Every push to main ships a new release: an installer plus a portable zip.
+# Every push to main ships a new release: an installer plus a portable zip, and the Android
+# app (an .apk, added to the same release by the android job below).
 # Version = <major.minor from tauri.conf.json>.<workflow run number>, e.g. v0.1.42.
 # Docs-only changes don't trigger a release; add [skip ci] to a commit message to skip one.
 on:
@@ -24,6 +25,9 @@ jobs:
   release:
     name: Build & publish
     runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -166,3 +170,76 @@ jobs:
             out/*.zip
             out/*.sig
             out/latest.json
+
+  android:
+    name: Android app
+    needs: release
+    # Linux: Tauri links the app's library into the Android project with a symlink, which
+    # Windows only allows in Developer Mode.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install the Android NDK
+        run: |
+          sdkmanager --install "ndk;27.1.12297006"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/27.1.12297006" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: android
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Stamp version
+        run: node scripts/set-version.mjs ${{ needs.release.outputs.version }}
+
+      - name: Signing key
+        env:
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          ks="$RUNNER_TEMP/release.jks"
+          if [ -n "$ANDROID_KEYSTORE" ]; then
+            echo "$ANDROID_KEYSTORE" | base64 -d > "$ks"
+            pw="$ANDROID_KEYSTORE_PASSWORD"
+          else
+            echo "::warning::ANDROID_KEYSTORE secret is not set — the APK is signed with a one-off key, so the next release won't install over it (uninstall first)."
+            pw=$(openssl rand -hex 16)
+            keytool -genkeypair -keystore "$ks" -storetype PKCS12 -alias braintracker -keyalg RSA -keysize 4096               -validity 36500 -storepass "$pw" -keypass "$pw" -dname "CN=BrainTracker"
+          fi
+          printf 'keyAlias=braintracker
+password=%s
+storeFile=%s
+' "$pw" "$ks" > src-tauri/gen/android/keystore.properties
+
+      - name: Build the APK
+        run: npx tauri android build --apk --target aarch64 armv7 x86_64
+
+      - name: Add it to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          apk=$(find src-tauri/gen/android/app/build/outputs/apk -name '*-release.apk' | head -1)
+          [ -n "$apk" ] || { echo "no APK was built"; exit 1; }
+          out="BrainTracker_${{ needs.release.outputs.version }}_android.apk"
+          cp "$apk" "$out"
+          gh release upload "${{ needs.release.outputs.tag }}" "$out" --clobber

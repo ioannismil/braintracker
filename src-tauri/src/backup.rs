@@ -292,6 +292,8 @@ pub fn restore(app: &AppHandle, name: &str) -> Result<(), String> {
         for (k, v) in settings {
             db::set_setting(&conn, &k, &v).map_err(err)?;
         }
+        // The notes were replaced: a paired phone sends and gets everything again.
+        crate::sync::new_epoch(&conn).map_err(err)?;
     }
     copy_missing(&dir.join("images"), &data_dir(app)?.join("images"))?;
     let _ = app.emit("data-restored", ());
