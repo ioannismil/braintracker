@@ -1,0 +1,48 @@
+name: Check Android signing key
+
+# Run by hand (Actions → Check Android signing key → Run workflow) to make sure the
+# ANDROID_KEYSTORE / ANDROID_KEYSTORE_PASSWORD secrets work, without building a release.
+# It prints the key's SHA-256 fingerprint (public, safe to show): compare it with your copy:
+#   keytool -list -v -keystore %USERPROFILE%\.android\braintracker-release.jks -alias braintracker
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Open the keystore
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Decode and open it
+        env:
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          [ -n "$ANDROID_KEYSTORE" ] || { echo "::error::The ANDROID_KEYSTORE secret is missing or empty."; exit 1; }
+          [ -n "$ANDROID_KEYSTORE_PASSWORD" ] || { echo "::error::The ANDROID_KEYSTORE_PASSWORD secret is missing or empty."; exit 1; }
+          ks="$RUNNER_TEMP/release.jks"
+          echo "$ANDROID_KEYSTORE" | base64 -d > "$ks" 2>/dev/null \
+            || { echo "::error::ANDROID_KEYSTORE isn't valid base64 (was the whole text pasted?)."; exit 1; }
+          if ! out=$(keytool -list -v -keystore "$ks" -alias braintracker -storepass "$ANDROID_KEYSTORE_PASSWORD" 2>&1); then
+            echo "$out" | grep -iE "password|alias|keystore" | head -3
+            echo "::error::Couldn't open the key: wrong password, a damaged file, or no key named 'braintracker'."
+            exit 1
+          fi
+          fp=$(echo "$out" | grep -m1 "SHA256:" | sed 's/.*SHA256: *//')
+          valid=$(echo "$out" | grep -m1 "Valid from")
+          echo "The secrets work. Key 'braintracker':"
+          echo "  SHA-256: $fp"
+          echo "  $valid"
+          {
+            echo "### ✅ The Android signing key opens"
+            echo "- SHA-256 fingerprint: \`$fp\`"
+            echo "- $valid"
+          } >> "$GITHUB_STEP_SUMMARY"
+          rm -f "$ks"
