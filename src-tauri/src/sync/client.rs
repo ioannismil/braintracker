@@ -52,7 +52,7 @@ pub fn forget_link(conn: &Connection) -> rusqlite::Result<()> {
 fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .http_status_as_error(false)
-        .timeout_connect(Some(Duration::from_millis(2500)))
+        .timeout_connect(Some(Duration::from_secs(5)))
         .timeout_global(Some(Duration::from_secs(120)))
         .build()
         .into()
@@ -128,8 +128,13 @@ pub fn pair(db: &Mutex<Connection>, code_text: &str) -> Result<Link, String> {
             Err(Failure::Unreachable(e)) => last = e,
         }
     }
+    let tried = code.addresses.iter().map(|a| format!("{a}:{}", code.port)).collect::<Vec<_>>().join(", ");
     Err(format!(
-        "Couldn’t reach the PC ({last}). Make sure the phone is on the same Wi-Fi, and that Windows lets BrainTracker accept connections (Windows Security → Firewall → Allow an app)."
+        "Couldn’t reach the PC at {tried} ({last}).
+
+Check that this phone is on the same Wi-Fi as the PC (its address should start the same way, e.g. 192.168.1.…) and not on mobile data or a guest network. To test, open http://{}:{}/ in the phone’s browser: if it doesn’t load, the network or the PC’s firewall is blocking it.",
+        code.addresses.first().map(String::as_str).unwrap_or("the PC"),
+        code.port
     ))
 }
 

@@ -350,7 +350,10 @@ pub fn listen(
             };
             let (peer, pair) = (header("X-BT-Peer"), header("X-BT-Pair"));
             let path = request.url().split('?').next().unwrap_or("").to_string();
-            let reply = if *request.method() != tiny_http::Method::Post {
+            let reply = if *request.method() == tiny_http::Method::Get && path == "/" {
+                // So a phone's browser can check that it reaches this PC at all.
+                Reply::ok("BrainTracker on this PC can be reached from here. Pair from the BrainTracker phone app.".into())
+            } else if *request.method() != tiny_http::Method::Post {
                 Reply::status(405)
             } else {
                 let mut body = Vec::new();

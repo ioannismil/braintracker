@@ -253,3 +253,11 @@ fn changes_made_by_sync_are_not_sent_back() {
     let (changes, _, _) = collect(&conn, 0, &pc_id, BATCH).unwrap();
     assert!(changes.is_empty());
 }
+
+#[test]
+fn a_browser_can_check_the_pc_is_reachable() {
+    let pc = Device::new();
+    let running = listen(pc.db.clone(), pc.images.clone(), Box::new(|_| {}), "127.0.0.1", false).unwrap();
+    let mut resp = ureq::get(&format!("http://127.0.0.1:{}/", running.host.port)).call().unwrap();
+    assert!(resp.body_mut().read_to_string().unwrap().contains("can be reached"));
+}

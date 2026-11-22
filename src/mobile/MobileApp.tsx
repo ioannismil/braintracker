@@ -23,6 +23,16 @@ import Snippet from "../Snippet";
 
 type View = { kind: "list" } | { kind: "note"; id: number; edit: boolean } | { kind: "sync" } | { kind: "trash" };
 
+/** A QR scan is running: the camera shows behind the (now see-through) page. */
+let scanning = false;
+/** The scan was cancelled (Cancel or Back): its error is expected, not shown. */
+let scanCancelled = false;
+async function cancelScan() {
+  scanCancelled = true;
+  const { cancel } = await import("@tauri-apps/plugin-barcode-scanner");
+  cancel().catch(() => {});
+}
+
 /** Ask for a sync this long after the last edit (quicker than the every-45-seconds one). */
 const SYNC_AFTER_EDIT_MS = 2500;
 let syncTimer: number | undefined;
@@ -74,7 +84,14 @@ export default function MobileApp() {
   // Android's back button/gesture goes back in the webview's history: each screen is a step.
   useEffect(() => {
     history.replaceState({ kind: "list" }, "");
-    const onPop = (e: PopStateEvent) => setView((e.state as View) ?? { kind: "list" });
+    const onPop = (e: PopStateEvent) => {
+      // Back while the camera is scanning: just stop scanning (the scan pushed a step for this).
+      if (scanning) {
+        scanning = false;
+        cancelScan();
+      }
+      setView((e.state as View) ?? { kind: "list" });
+    };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
@@ -443,6 +460,7 @@ function SyncScreen({
   const [error, setError] = useState("");
   const [typing, setTyping] = useState(false);
   const [code, setCode] = useState("");
+  const [camera, setCamera] = useState(false);
 
   const run = async (f: () => Promise<PhoneSyncStatus>) => {
     setBusy(true);
@@ -466,13 +484,41 @@ function SyncScreen({
         setError("BrainTracker needs the camera to scan the code. You can also paste the code as text.");
         return;
       }
-      const found = await scan({ windowed: false, formats: [Format.QRCode] });
+      // The camera shows behind the page (windowed), so the page can show a hint and Cancel.
+      // Back cancels too: this step is what it goes back from.
+      history.pushState({ kind: "sync" }, "");
+      scanning = true;
+      scanCancelled = false;
+      setCamera(true);
+      document.documentElement.classList.add("m-scanning");
+      let found;
+      try {
+        found = await scan({ windowed: true, formats: [Format.QRCode] });
+      } finally {
+        const byBack = !scanning;
+        scanning = false;
+        setCamera(false);
+        document.documentElement.classList.remove("m-scanning");
+        if (!byBack) history.back(); // drop the step pushed above
+      }
       if (found?.content) run(() => syncApi.pairWith(found.content));
     } catch (e) {
-      const msg = String(e);
-      if (!/cancel/i.test(msg)) setError(msg);
+      // Plugins reject with a string or an object with a message.
+      const msg = typeof e === "string" ? e : ((e as { message?: string })?.message ?? JSON.stringify(e));
+      if (!scanCancelled && !/cancel/i.test(msg)) setError(msg);
     }
   };
+
+  if (camera)
+    return (
+      <div className="m-scan">
+        <p>Point the camera at the QR code in BrainTracker on your PC.</p>
+        <div className="m-scan-frame" />
+        <button className="m-secondary" onClick={cancelScan}>
+          Cancel
+        </button>
+      </div>
+    );
 
   const unpair = () => {
     if (confirm("Stop syncing with this PC? The notes stay on this phone.")) run(syncApi.unpair);

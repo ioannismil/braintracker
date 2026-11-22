@@ -57,9 +57,10 @@ android {
             if (rootProject.file("keystore.properties").exists()) {
                 signingConfig = signingConfigs.getByName("release")
             }
-            optimization {
-               enable = true
-            }
+            // No R8 shrinking/optimising: it broke the QR scanner (the camera and ML Kit
+            // libraries look classes up by name, and R8 renamed them, so the app crashed right
+            // after the camera permission was granted). The app is small; it isn't worth it.
+            isMinifyEnabled = false
             proguardFiles(
                 *fileTree(".") {
                   include("**/*.pro")

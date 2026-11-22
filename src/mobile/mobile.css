@@ -17,8 +17,9 @@ body { font-size: 16px; -webkit-tap-highlight-color: transparent; overscroll-beh
   display: flex;
   flex-direction: column;
   background: var(--bg);
-  padding-top: env(safe-area-inset-top);
-  padding-bottom: env(safe-area-inset-bottom);
+  /* Android draws the app under the status bar, and its WebView may report no inset for it. */
+  padding-top: max(env(safe-area-inset-top), 28px);
+  padding-bottom: max(env(safe-area-inset-bottom), 12px);
 }
 
 /* ---------- top bar ---------- */
@@ -145,7 +146,7 @@ body { font-size: 16px; -webkit-tap-highlight-color: transparent; overscroll-beh
 .m-fab {
   position: fixed;
   right: 20px;
-  bottom: calc(24px + env(safe-area-inset-bottom));
+  bottom: calc(24px + max(env(safe-area-inset-bottom), 12px));
   width: 60px;
   height: 60px;
   border-radius: 18px;
@@ -185,4 +186,19 @@ body { font-size: 16px; -webkit-tap-highlight-color: transparent; overscroll-beh
 .m-primary:disabled, .m-secondary:disabled { opacity: 0.5; }
 .m-link { border: 0; background: transparent; color: var(--accent); padding: 8px 0; }
 .m-code { min-height: 90px; border: 1px solid var(--line); border-radius: 12px; padding: 10px; font: 13px var(--mono); background: var(--sheet); resize: vertical; }
-.m-warn { color: var(--danger); font-size: 14px; }
+.m-warn { color: var(--danger); font-size: 14px; white-space: pre-line; }
+
+/* ---------- scanning the pairing QR code: the camera is behind a see-through page ---------- */
+html.m-scanning, html.m-scanning body, html.m-scanning #root { background: transparent !important; }
+.m-scan {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: calc(32px + max(env(safe-area-inset-top), 28px)) 24px calc(32px + max(env(safe-area-inset-bottom), 12px));
+  background: transparent;
+}
+.m-scan p { margin: 0; padding: 10px 16px; border-radius: 12px; background: rgba(0, 0, 0, 0.6); color: #fff; text-align: center; }
+.m-scan-frame { width: 70vw; height: 70vw; max-width: 320px; max-height: 320px; border: 3px solid rgba(255, 255, 255, 0.9); border-radius: 20px; box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.35); }
+.m-scan .m-secondary { width: 100%; max-width: 320px; }
