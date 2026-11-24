@@ -38,7 +38,7 @@ tauri-plugin-single-instance = "2.5.5"
 tauri-plugin-global-shortcut = "2.4.1"
 tauri-plugin-updater = "2.14.1"
 # The pairing QR code shown in Settings
-qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+qrcode = { version = "0.15", default-features = false, features = ["svg"] }
 
 # The phone app only: scanning the pairing QR code.
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
