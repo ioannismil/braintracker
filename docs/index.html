@@ -645,15 +645,6 @@
       .catch(function () {});
   })();
 
-  // On a phone, lead with the Android app.
-  if (/Android/i.test(navigator.userAgent)) {
-    var cta = document.querySelector(".cta");
-    var apk = cta.querySelector('[data-dl="apk"]');
-    apk.classList.replace("btn-ghost", "btn-primary");
-    cta.querySelector('[data-dl="setup"]').classList.replace("btn-primary", "btn-ghost");
-    cta.insertBefore(apk, cta.firstChild);
-  }
-
   // Video: pause button, and respect "reduce motion".
   (function () {
     var v = document.getElementById("demo"), b = document.getElementById("playToggle"), icon = document.getElementById("playIcon");
