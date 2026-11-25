@@ -17,7 +17,7 @@ Plus an **Android app** that keeps the same notes, synced straight from your PC 
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-24c8db?style=flat-square&logo=tauri&logoColor=white)](https://tauri.app)
 [![License: MIT](https://img.shields.io/badge/license-MIT-6b5f56?style=flat-square)](LICENSE)
 
-[**Download**](#-download) · [Features](#-features) · [Screenshots](#-screenshots) · [Phone app](#-phone-app--sync) · [Shortcuts](#%EF%B8%8F-keyboard-shortcuts) · [Command line](#-command-line) · [Your data](#-your-data) · [Build from source](#%EF%B8%8F-build-from-source)
+[**Website**](https://ioannismil.github.io/braintracker/) · [**Download**](#-download) · [Features](#-features) · [Screenshots](#-screenshots) · [Phone app](#-phone-app--sync) · [Shortcuts](#%EF%B8%8F-keyboard-shortcuts) · [Command line](#-command-line) · [Your data](#-your-data) · [Build from source](#%EF%B8%8F-build-from-source)
 
 <br/>
 
@@ -347,7 +347,7 @@ npm run e2e -- --ci                   # skip tests that need a real desktop
 npm run e2e -- --demo --stop-app      # re-record the README screenshots + video (needs ffmpeg)
 ```
 
-The README media in `docs/media/` comes from `--demo` (`e2e/demo.mjs`): it fills a throwaway copy of the app with example notes and records it in front of a plain backdrop, so your own notes and desktop never appear. Screenshots of any failures go to `e2e/out/`. They aren't run by the release workflow (desktop tests don't suit GitHub's Windows machines), so run them before pushing app changes.
+The [website](https://ioannismil.github.io/braintracker/) is `docs/index.html`, served by GitHub Pages from the `docs/` folder on `main` (editing it doesn't trigger a release); it uses the same media. The README media in `docs/media/` comes from `--demo` (`e2e/demo.mjs`): it fills a throwaway copy of the app with example notes and records it in front of a plain backdrop, so your own notes and desktop never appear. Screenshots of any failures go to `e2e/out/`. They aren't run by the release workflow (desktop tests don't suit GitHub's Windows machines), so run them before pushing app changes.
 
 <details>
 <summary><b>Project structure</b></summary>
