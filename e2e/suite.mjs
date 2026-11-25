@@ -811,16 +811,18 @@ export async function run() {
       await keys(Key.ESCAPE);
     });
 
-    await test("offline mode: web images in notes aren't loaded; they load again when it's off", async () => {
+    await test("offline mode: web images in notes aren't loaded (pasted screenshots are); they load again when it's off", async () => {
       await d.switchTo().window(mainHandle);
       if (await exists(d, ".dialog")) await keys(Key.ESCAPE);
       await invoke(d, "set_offline", { enabled: true });
-      const e = await invoke(d, "create_entry", { title: "Remote image", tags: [], body: "![logo](https://example.com/logo.png)" });
+      const e = await invoke(d, "create_entry", { title: "Remote image", tags: [], body: "![logo](https://example.com/logo.png)\n\n![screenshot](img:local-shot.png)" });
       await d.executeScript("window.dispatchEvent(new Event('focus'))");
       await waitFor(async () => (await rows()).includes("Remote image"), 3000, "row");
       for (const r of await $$(d, ".list .row")) if ((await r.getText()).includes("Remote image")) await r.click();
       await waitFor(() => exists(d, "article.markdown .blocked-img"), 3000, "offline placeholder");
-      if (await d.executeScript("return !!document.querySelector('article.markdown img[src^=\"http\"]')")) throw new Error("loaded while offline");
+      if (await d.executeScript("return !!document.querySelector('article.markdown img[src*=\"example.com\"]')")) throw new Error("loaded while offline");
+      if (!(await d.executeScript("return !!document.querySelector('article.markdown img[src^=\"http://btimg.localhost/\"]')")))
+        throw new Error("pasted screenshot hidden by offline mode");
       await invoke(d, "set_offline", { enabled: false });
       await ctrl("e");
       await ctrl("e");

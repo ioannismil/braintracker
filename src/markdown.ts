@@ -5,7 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { prefsApi } from "./api";
 import { findBlanks, fillBlanks, PLACEHOLDER, type Blank } from "./blanks";
-import { resolveImages } from "./images";
+import { IMG_BASE, resolveImages } from "./images";
 
 marked.setOptions({ gfm: true, breaks: true });
 
@@ -61,7 +61,11 @@ const REMOTE_IMG = /<img\b[^>]*>/gi;
 export function renderMarkdown(body: string): string {
   const clean = DOMPurify.sanitize(
     marked.parse(resolveImages(body) || "*Nothing written yet.*", { async: false }) as string,
-  ).replace(REMOTE_IMG, (tag) => tag.replace(/\bsrc="(https?:[^"]*)"/i, 'data-remote="$1"'));
+  ).replace(REMOTE_IMG, (tag) =>
+    // Pasted screenshots are served locally at IMG_BASE (an http:// address on Windows): those
+    // aren't web images and always load, offline mode or not.
+    tag.replace(/\bsrc="(https?:[^"]*)"/i, (attr, src: string) => (src.startsWith(IMG_BASE) ? attr : `data-remote="${src}"`)),
+  );
   // Added after sanitizing: our own markup only.
   return clean
     .replace(/<pre>([\s\S]*?)<\/pre>/g, (_m, inner: string) => {
