@@ -17,7 +17,13 @@ Plus an **Android app** that keeps the same notes, synced straight from your PC 
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-24c8db?style=flat-square&logo=tauri&logoColor=white)](https://tauri.app)
 [![License: MIT](https://img.shields.io/badge/license-MIT-6b5f56?style=flat-square)](LICENSE)
 
-[**Download**](#-download) · [Features](#-features) · [Phone app](#-phone-app--sync) · [Shortcuts](#%EF%B8%8F-keyboard-shortcuts) · [Command line](#-command-line) · [Your data](#-your-data) · [Build from source](#%EF%B8%8F-build-from-source)
+[**Download**](#-download) · [Features](#-features) · [Screenshots](#-screenshots) · [Phone app](#-phone-app--sync) · [Shortcuts](#%EF%B8%8F-keyboard-shortcuts) · [Command line](#-command-line) · [Your data](#-your-data) · [Build from source](#%EF%B8%8F-build-from-source)
+
+<br/>
+
+<img src="docs/media/demo.gif" width="900" alt="BrainTracker in action: searching as you type, filling in a command's blanks before copying it, finding a screenshot by the text inside it, quick capture and quick search from anywhere" />
+
+<sub>Search as you type · fill in a command's blanks, then copy · find a screenshot by the text in it · capture and search from anywhere · <a href="docs/media/demo.mp4">watch in full quality (MP4)</a></sub>
 
 </div>
 
@@ -116,6 +122,41 @@ The **Android app** has all your notes in your pocket: search, tags, pinned note
 ### 🔁 Syncs without a cloud
 Pair the phone once by scanning a QR code on the PC. From then on they sync **directly** — over your Wi-Fi at home, or from anywhere with [Tailscale](https://tailscale.com) — encrypted end to end. Edited on both? The later edit wins and the other is kept in History.
 
+</td>
+</tr>
+</table>
+
+## 📸 Screenshots
+
+<table>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/media/main.png" alt="The main window: notes grouped by day with a pinned note on top, and a note with code blocks" />
+<p align="center"><sub><b>Your notes</b> — grouped by day, pinned ones on top, code ready to copy</sub></p>
+</td>
+<td width="50%" valign="top">
+<img src="docs/media/search.png" alt="Searching for 'dock' finds the Docker note, with the matches highlighted" />
+<p align="center"><sub><b>Search as you type</b> — partial words match, results highlighted</sub></p>
+</td>
+</tr>
+<tr>
+<td valign="top">
+<img src="docs/media/blanks.png" alt="Copying an ssh command asks for the user, host and port first and shows the finished command" />
+<p align="center"><sub><b>Commands with blanks</b> — <b>Copy</b> asks for the values, remembers them</sub></p>
+</td>
+<td valign="top">
+<img src="docs/media/ocr.png" alt="Searching for an error code finds the note whose screenshot shows that error" />
+<p align="center"><sub><b>Text in screenshots is searchable</b> — an error code finds its screenshot</sub></p>
+</td>
+</tr>
+<tr>
+<td valign="top">
+<img src="docs/media/capture.png" alt="The quick capture popup over another window" />
+<p align="center"><sub><b>Quick capture</b> — <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>E</kbd> from any app</sub></p>
+</td>
+<td valign="top">
+<img src="docs/media/spotlight.png" alt="The Spotlight-style quick search bar showing a matching note" />
+<p align="center"><sub><b>Quick search</b> — <kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>Space</kbd> from any app</sub></p>
 </td>
 </tr>
 </table>
@@ -303,9 +344,10 @@ npx tauri build --no-bundle           # build the app to test
 npm run e2e                           # everything; presses real keys, so don't type while it runs
 npm run e2e -- --stop-app             # same, quitting your running BrainTracker first (restarted after)
 npm run e2e -- --ci                   # skip tests that need a real desktop
+npm run e2e -- --demo --stop-app      # re-record the README screenshots + video (needs ffmpeg)
 ```
 
-Screenshots of any failures go to `e2e/out/`. They aren't run by the release workflow (desktop tests don't suit GitHub's Windows machines), so run them before pushing app changes.
+The README media in `docs/media/` comes from `--demo` (`e2e/demo.mjs`): it fills a throwaway copy of the app with example notes and records it in front of a plain backdrop, so your own notes and desktop never appear. Screenshots of any failures go to `e2e/out/`. They aren't run by the release workflow (desktop tests don't suit GitHub's Windows machines), so run them before pushing app changes.
 
 <details>
 <summary><b>Project structure</b></summary>

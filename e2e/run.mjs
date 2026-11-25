@@ -4,6 +4,7 @@
 //   npm run e2e -- --ci         skip tests that need a desktop (system-wide shortcuts etc.)
 //   npm run e2e -- --stop-app   quit your running BrainTracker first, start it again after
 //   npm run e2e -- --exe <path> test another build (default: src-tauri/target/release)
+//   npm run e2e -- --demo       record the README screenshots + video into docs/media (see demo.mjs)
 //
 // Needs: a release build (npx tauri build --no-bundle) and tauri-driver
 // (cargo install tauri-driver --locked). The matching Edge WebDriver is downloaded by itself.
@@ -133,7 +134,7 @@ process.on("SIGINT", () => {
 console.log(`Testing ${release}${cfg.ci ? " (CI: desktop-only tests skipped)" : ""}\n`);
 let failed = 1;
 try {
-  const { run } = await import("./suite.mjs");
+  const { run } = await import(flag("--demo") ? "./demo.mjs" : "./suite.mjs"); // --demo: README media
   failed = await run();
 } catch (e) {
   console.error("e2e:", e);
